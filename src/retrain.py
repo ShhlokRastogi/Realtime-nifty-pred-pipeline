@@ -18,7 +18,7 @@ from train import create_target_variable, split_data
 
 # Ensure UTF-8 output on Windows
 os.environ["PYTHONIOENCODING"] = "utf-8"
-mlflow.set_tracking_uri("http://127.0.0.1:5000")
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
 client = MlflowClient()
 
 def should_promote(candidate_accuracy: float, incumbent_accuracy: float, dummy_accuracy: float) -> bool:

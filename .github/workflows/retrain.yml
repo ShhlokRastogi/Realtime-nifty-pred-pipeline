@@ -1,0 +1,52 @@
+name: Self-Healing Model Retraining
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Run daily at midnight UTC
+  workflow_dispatch:      # Allows you to trigger this manually from the GitHub Actions tab
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Allows the workflow to push the updated model files back to GitHub
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Model Retraining
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          MLFLOW_TRACKING_URI: "sqlite:///mlflow.db" # Stores temporary MLflow runs inside a local runner DB
+        run: |
+          python src/retrain.py
+
+      - name: Commit and Push Self-Healed Model
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Stage the model weights and metadata
+          git add models/xgb_model.pkl models/model_metadata.json
+          
+          # Only commit if the files have changed (which means promotion happened!)
+          if git diff --staged --quiet; then
+            echo "No model promotion occurred. Keeping current model."
+          else
+            git commit -m "chore: automated self-healed model weights [skip ci]"
+            git push
+          fi
