@@ -7,10 +7,19 @@ from prometheus_client import REGISTRY, Counter, Gauge, generate_latest, CONTENT
 from drift import run_drift_check, FEATURE_COLS
 
 app = FastAPI(title="Crypto Price Prediction API")
+import os
 import mlflow
+import joblib
 
-mlflow.set_tracking_uri("http://127.0.0.1:5000")
-model = mlflow.xgboost.load_model("models:/crypto-model/Production")
+# Check if we are running unit tests
+if os.getenv("TESTING") == "True":
+    # Load the local backup model directly (no network needed)
+    model = joblib.load("../models/xgb_model.pkl")
+else:
+    # Query MLflow Model Registry in production
+    mlflow.set_tracking_uri("http://127.0.0.1:5000")
+    model = mlflow.xgboost.load_model("models:/crypto-model/Production")
+    
 r = redis.Redis(**REDIS_CONFIG)
 
 
