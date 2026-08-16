@@ -33,20 +33,23 @@ PROCESSED_DATA_DIR = "data/processed"
 # ── Model ────────────────────────────────────────────────
 RANDOM_SEED = 42
 
+import os
+
 # ── Database (Postgres) ─────────────────────────────────
-# Must match the values in docker-compose.yml
+# Reads environment variables for cloud deployment, falls back to local docker configs
 DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "user": "myuser",
-    "password": "mypassword",
-    "dbname": "crypto_features",
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "user": os.getenv("DB_USER", "myuser"),
+    "password": os.getenv("DB_PASSWORD", "mypassword"),
+    "dbname": os.getenv("DB_NAME", "crypto_features"),
 }
 
 # ── Cache (Redis) ────────────────────────────────────────
 REDIS_CONFIG = {
-    "host": "localhost",
-    "port": 6379,
+    "host": os.getenv("REDIS_HOST", "localhost"),
+    "port": int(os.getenv("REDIS_PORT", "6379")),
+    "password": os.getenv("REDIS_PASSWORD", None),
     "db": 0,
 }
 
