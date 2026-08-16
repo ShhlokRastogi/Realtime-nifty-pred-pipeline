@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Data and Models
+data/raw/*.csv
+data/processed/
+models/*.pkl
+mlruns/
+mlflow.db
+mlflow.db-journal
+
+# Docker local databases
+docker_data/
+
+# OS metadata
+.DS_Store
+Thumbs.db

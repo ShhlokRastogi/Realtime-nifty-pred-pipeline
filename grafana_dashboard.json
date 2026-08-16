@@ -1,0 +1,30 @@
+{
+  "title": "BTC-USD Drift Status",
+  "type": "stat",                  
+  "gridPos": {
+    "h": 4,                       
+    "w": 8,                        
+    "x": 0,                        
+    "y": 0                         
+  },
+  "targets": [
+    {
+      "expr": "crypto_mlops_drift_drift_detected{ticker=\"BTC-USD\"}", 
+      "instant": true,            
+      "refId": "A"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "mappings": [
+        {
+          "type": "value",
+          "options": {
+            "0": { "text": "HEALTHY", "color": "green", "index": 0 },
+            "1": { "text": "DRIFTED", "color": "red", "index": 1 }
+          }
+        }
+      ]
+    }
+  }
+}
