@@ -46,12 +46,18 @@ DB_CONFIG = {
 }
 
 # ── Cache (Redis) ────────────────────────────────────────
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_CONFIG = {
-    "host": os.getenv("REDIS_HOST", "localhost"),
+    "host": REDIS_HOST,
     "port": int(os.getenv("REDIS_PORT", "6379")),
     "password": os.getenv("REDIS_PASSWORD", None),
     "db": 0,
 }
+
+# Automatically enable SSL for cloud Redis (Upstash) connections
+if "localhost" not in REDIS_HOST:
+    REDIS_CONFIG["ssl"] = True
+    REDIS_CONFIG["ssl_cert_reqs"] = "none"
 
 DRIFT_GAUGE = Gauge(
     "drift_detected",                          # name

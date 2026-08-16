@@ -12,21 +12,35 @@ from features import build_features
 from config import DB_CONFIG, REDIS_CONFIG, TICKERS
 
 
-def read_ohlcv_from_db(ticker: str) -> pd.DataFrame:
+def read_ohlcv_from_db(ticker: str, limit: int = None) -> pd.DataFrame:
     """
     Read raw OHLCV data for a ticker from the Postgres ohlcv table.
+    Supports an optional limit to read only the latest N rows.
 
     Returns:
         DataFrame with DatetimeIndex and columns: open, high, low, close, volume
     """
     conn = psycopg2.connect(**DB_CONFIG)
-    query = """
-        SELECT date, open, high, low, close, volume
-        FROM ohlcv
-        WHERE ticker = %s
-        ORDER BY date ASC
-    """
-    df = pd.read_sql(query, conn, params=(ticker,), parse_dates=["date"])
+    if limit:
+        query = """
+            SELECT date, open, high, low, close, volume
+            FROM ohlcv
+            WHERE ticker = %s
+            ORDER BY date DESC
+            LIMIT %s
+        """
+        df = pd.read_sql(query, conn, params=(ticker, limit), parse_dates=["date"])
+        # Reverse the order to ASC so rolling windows calculate chronologically
+        df = df.iloc[::-1]
+    else:
+        query = """
+            SELECT date, open, high, low, close, volume
+            FROM ohlcv
+            WHERE ticker = %s
+            ORDER BY date ASC
+        """
+        df = pd.read_sql(query, conn, params=(ticker,), parse_dates=["date"])
+        
     conn.close()
 
     # Set date as index (same format as the CSV-based pipeline)
@@ -115,7 +129,7 @@ def cache_latest_in_redis(df: pd.DataFrame, ticker: str) -> None:
     print(f"  Cached latest features in Redis: features:{ticker}")
 
 
-def run_feature_store():
+def run_feature_store(limit: int = None):
     """
     Full feature store pipeline:
     1. Read OHLCV from Postgres
@@ -127,7 +141,7 @@ def run_feature_store():
         print(f"\n--- {ticker} ---")
 
         # Step 1: Read raw data from Postgres
-        ohlcv_df = read_ohlcv_from_db(ticker)
+        ohlcv_df = read_ohlcv_from_db(ticker, limit=limit)
         print(f"  Read {len(ohlcv_df)} OHLCV rows from Postgres")
 
         # Step 2: Compute features

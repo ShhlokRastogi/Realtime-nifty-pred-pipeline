@@ -85,8 +85,8 @@ def poll_once():
             
     # Step 2: Trigger feature store to recompute and write to Postgres + Redis
     try:
-        print("Triggering Feature Store run...")
-        run_feature_store()
+        print("Triggering Feature Store run (incremental mode: limit=100)...")
+        run_feature_store(limit=100)
     except Exception as e:
         print(f"  Error during Feature Store run: {e}")
     print("=== Polling cycle complete ===")
