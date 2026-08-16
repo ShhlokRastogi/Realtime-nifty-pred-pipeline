@@ -1,7 +1,15 @@
 global:
   scrape_interval: 5s
 
+remote_write:
+  - url: https://prometheus-prod-43-prod-ap-south-1.grafana.net/api/prom/push
+    basic_auth:
+      username: 3501192
+      password: glc_eyJvIjoiMTg3OTQ5MiIsIm4iOiJzdGFjay0xNzg4NDg0LWFsbG95LWxvY2FsLXNjcmFwcGVyIiwiayI6ImU3UE85YjZuNjEydnZYZ0hXNVg2NWo1UiIsIm0iOnsiciI6InByb2QtYXAtc291dGgtMSJ9fQ==
+
 scrape_configs:
-  - job_name: 'crypto-pipeline'
+  - job_name: 'crypto-pipeline-cloud'
+    metrics_path: '/metrics'
+    scheme: 'https'
     static_configs:
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["crypto-pipeline-api.onrender.com:443"]
