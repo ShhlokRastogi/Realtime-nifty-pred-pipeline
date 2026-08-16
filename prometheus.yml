@@ -1,5 +1,6 @@
 global:
-  scrape_interval: 5s
+  scrape_interval: 30s
+  scrape_timeout: 25s
 
 remote_write:
   - url: https://prometheus-prod-43-prod-ap-south-1.grafana.net/api/prom/push
