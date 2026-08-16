@@ -11,7 +11,6 @@ ENV/
 # Data and Models
 data/raw/*.csv
 data/processed/
-models/*.pkl
 mlruns/
 mlflow.db
 mlflow.db-journal

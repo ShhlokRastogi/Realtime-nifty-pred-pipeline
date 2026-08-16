@@ -11,15 +11,10 @@ import os
 import mlflow
 import joblib
 
-# Check if we are running unit tests
-if os.getenv("TESTING") == "True":
-    # Load the local backup model directly (no network needed)
-    model = joblib.load("../models/xgb_model.pkl")
-else:
-    # Query MLflow Model Registry in production
-    mlflow.set_tracking_uri("http://127.0.0.1:5000")
-    model = mlflow.xgboost.load_model("models:/crypto-model/Production")
-    
+# Load the local backup model dynamically relative to this file's location
+base_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(base_dir, "..", "models", "xgb_model.pkl")
+model = joblib.load(model_path)
 r = redis.Redis(**REDIS_CONFIG)
 
 

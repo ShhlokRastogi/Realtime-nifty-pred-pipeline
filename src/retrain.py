@@ -114,20 +114,43 @@ def run_retraining():
         promote = should_promote(candidate_acc, incumbent_acc, dummy_acc)
         print(f"\nPromotion Decision: {promote}")
         if promote:
-            print("Candidate passed the gate! Registering in MLflow Model Registry as 'Staging'...")
+            print("Candidate passed the gate! Saving model locally and registering in MLflow Staging...")
+            # 1. Log to MLflow
             model_info = mlflow.xgboost.log_model(
                 candidate_model, 
                 artifact_path="model", 
                 registered_model_name="crypto-model"
             )
             version = model_info.registered_model_version
-            
             client.transition_model_version_stage(
                 name="crypto-model",
                 version=version,
                 stage="Staging"
             )
             print(f"Successfully registered model version {version} in stage 'Staging'!")
+
+            # 2. Save model locally (Git-Ops overwrite)
+            import joblib
+            import json
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            local_model_path = os.path.join(base_dir, "..", "models", "xgb_model.pkl")
+            local_meta_path = os.path.join(base_dir, "..", "models", "model_metadata.json")
+
+            joblib.dump(candidate_model, local_model_path)
+            print(f"Saved candidate model locally to: {local_model_path}")
+
+            # 3. Output metadata JSON
+            metadata = {
+                "version": int(version),
+                "accuracy": float(candidate_acc),
+                "incumbent_accuracy": float(incumbent_acc),
+                "dummy_accuracy": float(dummy_acc),
+                "timestamp": str(pd.Timestamp.now()),
+                "parameters": best_params
+            }
+            with open(local_meta_path, "w") as f:
+                json.dump(metadata, f, indent=4)
+            print(f"Saved version metadata to: {local_meta_path}")
         else:
             print("Candidate failed the promotion gate. Keeping the current Production model.")
 if __name__ == "__main__":
