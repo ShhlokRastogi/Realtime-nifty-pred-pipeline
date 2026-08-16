@@ -92,6 +92,7 @@ def health():
 
 @app.get("/metrics")
 def metrics():
+    import gc
     # Loop through our active tickers (BTC-USD, ETH-USD)
     for t in TICKERS:
         # Run the drift calculations
@@ -106,6 +107,10 @@ def metrics():
             p_values = drift_result["p_values"]
             for feature_name, p_val in p_values.items():
                 PVALUE_GAUGE.labels(ticker=t, feature=feature_name).set(p_val)
+                
+        # Clean up memory immediately after each ticker calculation
+        del drift_result
+        gc.collect()
                 
     # Return the metrics in the raw text format that Prometheus understands
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

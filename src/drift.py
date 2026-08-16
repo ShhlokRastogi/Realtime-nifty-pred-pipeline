@@ -8,12 +8,14 @@ FEATURE_COLS = [
     "volume_delta", "lagged_return_1", "lagged_return_3", "lagged_return_5"
 ]
 
-def load_baseline_features(ticker: str) -> pd.DataFrame:
+def load_baseline_features(ticker: str, limit: int = 2000) -> pd.DataFrame:
     """
     Load baseline features for a given ticker from the Postgres database.
+    Limits to the latest N rows before the cutoff to prevent memory exhaustion (OOM).
 
     Parameters:
     ticker (str): The ticker symbol to load features for.
+    limit (int): Maximum number of baseline rows to load.
 
     Returns:
     pd.DataFrame: DataFrame containing the features, indexed by date.
@@ -23,11 +25,13 @@ def load_baseline_features(ticker: str) -> pd.DataFrame:
         SELECT date, {', '.join(FEATURE_COLS)}
         FROM features
         WHERE ticker = %s and date < %s
-        ORDER BY date;
+        ORDER BY date DESC
+        LIMIT %s;
     """
-    df = pd.read_sql(query, conn, params=(ticker, TEST_CUTOFF))
+    df = pd.read_sql(query, conn, params=(ticker, TEST_CUTOFF, limit))
     conn.close()
     df.set_index('date', inplace=True)
+    df = df.sort_index()
     return df
 
 def load_recent_features(ticker: str, limit: int = 100) -> pd.DataFrame:
