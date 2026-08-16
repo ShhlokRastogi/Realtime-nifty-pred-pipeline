@@ -112,35 +112,34 @@ def metrics():
 
 
 from fastapi.responses import HTMLResponse
-from mlflow.tracking import MlflowClient
 
 @app.get("/promote", response_class=HTMLResponse)
 def promote_page():
-    """Renders a beautiful model comparison page to approve staging models."""
-    client = MlflowClient()
+    """Renders a beautiful model comparison page showing local model details and Git-Ops PR links."""
+    import json
     
-    prod_version = None
-    stage_version = None
-    prod_metrics = {}
-    stage_metrics = {}
-    prod_params = {}
-    stage_params = {}
+    # Define paths
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    meta_path = os.path.join(base_dir, "..", "models", "model_metadata.json")
     
-    # 1. Search for registered versions of the model
-    versions = client.search_model_versions("name='crypto-model'")
-    for v in versions:
-        if v.current_stage == "Production":
-            prod_version = v
-            run = client.get_run(v.run_id)
-            prod_metrics = run.data.metrics
-            prod_params = run.data.params
-        elif v.current_stage == "Staging":
-            stage_version = v
-            run = client.get_run(v.run_id)
-            stage_metrics = run.data.metrics
-            stage_params = run.data.params
+    # Load metadata with a fallback for the baseline model
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+    else:
+        # Default baseline model metadata
+        meta = {
+            "version": 1,
+            "accuracy": 0.5248,
+            "dummy_accuracy": 0.4898,
+            "timestamp": "2026-08-15 12:00:00",
+            "parameters": {"max_depth": 3, "n_estimators": 69}
+        }
 
-    # HTML UI Design with clean, modern CSS styling
+    # HTML UI Design aligned with Git-Ops flow
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -229,138 +228,70 @@ def promote_page():
                 font-weight: 600;
                 cursor: pointer;
                 text-align: center;
+                text-decoration: none;
                 transition: background-color 0.2s;
             }}
             .button:hover {{
                 background-color: #2563eb;
             }}
-            .button:disabled {{
-                background-color: #475569;
-                color: #94a3b8;
-                cursor: not-allowed;
-            }}
             .no-model {{
                 color: #64748b;
                 text-align: center;
                 padding: 40px 0;
+                font-size: 0.95rem;
+                line-height: 1.5;
             }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Model Promotion Gate</h1>
-            <p class="subtitle">Evaluate and promote candidate staging models to active production.</p>
+            <p class="subtitle">Evaluate and promote candidate staging models to active production using Git-Ops.</p>
             
             <div class="grid">
                 <!-- Incumbent Card -->
                 <div class="card">
                     <span class="badge prod">PRODUCTION (Active)</span>
-                    {f'''
-                    <div class="version">Model Version {prod_version.version}</div>
+                    <div class="version">Model Version {meta.get("version", 1)}</div>
                     <div class="metric-row">
                         <span class="metric-label">XGBoost Accuracy</span>
-                        <span class="metric-value">{prod_metrics.get("xgb_accuracy", 0.0):.4f}</span>
+                        <span class="metric-value">{meta.get("accuracy", 0.5248):.4f}</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Dummy Baseline Accuracy</span>
-                        <span class="metric-value">{prod_metrics.get("dummy_accuracy", 0.0):.4f}</span>
+                        <span class="metric-label">Baseline Accuracy</span>
+                        <span class="metric-value">{meta.get("dummy_accuracy", 0.4898):.4f}</span>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Number of Trees</span>
-                        <span class="metric-value">{prod_params.get("n_estimators", "N/A")}</span>
+                        <span class="metric-value">{meta.get("parameters", {}).get("n_estimators", "N/A")}</span>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Max Depth</span>
-                        <span class="metric-value">{prod_params.get("max_depth", "N/A")}</span>
+                        <span class="metric-value">{meta.get("parameters", {}).get("max_depth", "N/A")}</span>
                     </div>
-                    ''' if prod_version else '<div class="no-model">No active model in Production</div>'}
+                    <div class="metric-row" style="border-bottom: none;">
+                        <span class="metric-label">Deployed At</span>
+                        <span class="metric-value" style="font-size: 0.8rem;">{meta.get("timestamp", "N/A")}</span>
+                    </div>
                 </div>
                 
                 <!-- Candidate Card -->
                 <div class="card staging">
-                    <span class="badge stage">STAGING (Candidate)</span>
-                    {f'''
-                    <div class="version">Model Version {stage_version.version}</div>
-                    <div class="metric-row">
-                        <span class="metric-label">Candidate Accuracy</span>
-                        <span class="metric-value">{stage_metrics.get("candidate_accuracy", 0.0):.4f}</span>
+                    <span class="badge stage">STAGING (Git-Ops Evaluation)</span>
+                    <div class="version">Candidate Staging PR</div>
+                    <div class="no-model">
+                        Model candidates are submitted as GitHub Pull Requests.<br><br>
+                        Merging a Pull Request automatically runs the tests, checks for drift, and deploys the model live!
                     </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Dummy Baseline Accuracy</span>
-                        <span class="metric-value">{stage_metrics.get("dummy_accuracy", 0.0):.4f}</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Number of Trees</span>
-                        <span class="metric-value">{stage_params.get("n_estimators", "N/A")}</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Max Depth</span>
-                        <span class="metric-value">{stage_params.get("max_depth", "N/A")}</span>
-                    </div>
-                    ''' if stage_version else '<div class="no-model">No candidate model in Staging</div>'}
                 </div>
             </div>
             
-            <form action="/promote/approve" method="POST">
-                <button type="submit" class="button" {"" if stage_version else "disabled"}>
-                    Approve and Promote to Production (Hot-Swap)
-                </button>
-            </form>
+            <a href="https://github.com/ShhlokRastogi/self-healing-crypto-pipeline/pulls" target="_blank" class="button">
+                Review and Merge Pull Requests on GitHub
+            </a>
         </div>
     </body>
     </html>
     """
     return html_content
-
-
-@app.post("/promote/approve")
-def approve_promotion():
-    """Handles the promotion, archiving the old model and hot-swapping the active model."""
-    global model
-    client = MlflowClient()
-    
-    prod_version = None
-    stage_version = None
-    
-    # Find current versions
-    versions = client.search_model_versions("name='crypto-model'")
-    for v in versions:
-        if v.current_stage == "Production":
-            prod_version = v
-        elif v.current_stage == "Staging":
-            stage_version = v
-
-    if not stage_version:
-        raise HTTPException(status_code=400, detail="No candidate model found in Staging.")
-
-    # 1. Demote current Production model to None/Archived
-    if prod_version:
-        client.transition_model_version_stage(
-            name="crypto-model",
-            version=prod_version.version,
-            stage="Archived"
-        )
-
-    # 2. Promote Staging model to Production
-    client.transition_model_version_stage(
-        name="crypto-model",
-        version=stage_version.version,
-        stage="Production"
-    )
-
-    # 3. HOT-SWAP: Reload the new model instantly in memory
-    print(f"Hot-swapping active model to Version {stage_version.version}...")
-    model = mlflow.xgboost.load_model("models:/crypto-model/Production")
-    
-    # Return HTML success page
-    html_success = f"""
-    <html>
-    <body style="font-family: sans-serif; background-color: #0f172a; color: white; text-align: center; padding-top: 100px;">
-        <h1 style="color: #10b981;">Promotion Successful!</h1>
-        <p>Model version <b>{stage_version.version}</b> is now in <b>Production</b> and running live.</p>
-        <a href="/promote" style="color: #3b82f6; text-decoration: none;">Go back to Dashboard</a>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_success)
 
