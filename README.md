@@ -1,6 +1,6 @@
-# Real-Time Self-Healing Crypto Prediction Pipeline (MLOps)
+# Real-Time Crypto Prediction & MLOps Monitoring Pipeline
 
-An enterprise-grade, 24/7 self-healing Machine Learning pipeline that predicts short-term (15-minute) price direction (UP/DOWN) for **BTC-USD** and **ETH-USD** using an optimized XGBoost classifier. 
+An enterprise-grade, 24/7 Machine Learning pipeline that predicts short-term (15-minute) price direction (UP/DOWN) for **BTC-USD** and **ETH-USD** using an optimized XGBoost classifier. 
 
 It continuously ingests live price data, computes streaming technical indicators, serves low-latency predictions, tracks live accuracy, and alerts on performance drift via Prometheus and Grafana Cloud.
 
@@ -54,7 +54,7 @@ Instead of static statistical data-drift (KS-test), the system implements **Perf
 *   Every 15 minutes (on candle close), the poller evaluates the model's previous prediction against the actual price change.
 *   Maintains a rolling **100-prediction sliding window** in Redis.
 *   Exposes live correctness states (`predicted_direction` vs. `true_direction`) and rolling accuracy metrics directly to Prometheus.
-*   **Self-Healing Threshold:** Triggers a `drift_detected` alert (`1.0`) if the rolling accuracy falls below **50% (coin-flip level)**.
+*   **Performance Drift Threshold:** Triggers a `drift_detected` alert (`1.0`) if the rolling accuracy falls below **50% (coin-flip level)**.
 
 ### 4. Low-Latency API serving
 *   **Predictions (`/predict/{ticker}`):** Fetches the pre-computed feature payload from Upstash Redis and executes the active model in under **20 milliseconds**.
