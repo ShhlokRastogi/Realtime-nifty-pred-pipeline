@@ -19,6 +19,26 @@ if not os.path.exists(model_path):
 model = joblib.load(model_path)
 r = redis.Redis(**REDIS_CONFIG)
 
+import threading
+import time
+from poll import poll_once
+
+def poller_loop():
+    print("=== Background Poller Thread Initialized ===")
+    while True:
+        try:
+            poll_once()
+        except Exception as e:
+            print(f"Error in background poller execution: {e}")
+        time.sleep(60)
+
+@app.on_event("startup")
+def startup_event():
+    # Run the poller loop in a background daemon thread
+    t = threading.Thread(target=poller_loop, daemon=True)
+    t.start()
+    print("=== Background Poller Thread Started ===")
+
 
 # Check if metrics are already registered (to prevent Uvicorn reload crashes)
 if 'crypto_mlops_drift_drift_detected' in REGISTRY._names_to_collectors:
