@@ -18,52 +18,28 @@ def map_ticker_to_binance(ticker: str) -> str:
     return clean
 
 
-def fetch_latest_candles_binance(ticker: str, interval: str = "1m", limit: int = 5) -> pd.DataFrame:
+import yfinance as yf
+
+def fetch_latest_candles_yfinance(ticker: str, interval: str = "15m", limit: int = 5) -> pd.DataFrame:
     """
-    Fetches the latest candles from Binance public API.
+    Fetches the latest candles from Yahoo Finance, bypassing US IP blocks.
     
     Returns:
         DataFrame formatted exactly like our yfinance downloads.
     """
-    symbol = map_ticker_to_binance(ticker)
-    url = f"https://api.binance.com/api/v3/klines"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    }
+    print(f"  Downloading latest {interval} candles from Yahoo Finance...")
+    # Fetch the last 1 day of 15m candles
+    df = yf.download(tickers=ticker, period="1d", interval=interval, progress=False)
     
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-    data = response.json()
-    
-    # Binance klines format:
-    # [
-    #   [
-    #     1499040000000,      // Kline open time (0)
-    #     "0.01634790",       // Open (1)
-    #     "0.80000000",       // High (2)
-    #     "0.01575800",       // Low (3)
-    #     "0.01577100",       // Close (4)
-    #     "148976.11427815",  // Volume (5)
-    #     ...
-    #   ]
-    # ]
-    
-    rows = []
-    for item in data:
-        timestamp = pd.to_datetime(item[0], unit='ms')
-        rows.append({
-            "Date": timestamp,
-            "Open": float(item[1]),
-            "High": float(item[2]),
-            "Low": float(item[3]),
-            "Close": float(item[4]),
-            "Volume": float(item[5])
-        })
+    if df.empty:
+        raise ValueError(f"No data returned from yfinance for {ticker}")
         
-    df = pd.DataFrame(rows)
-    df = df.set_index("Date")
+    # If columns are MultiIndexed (happens in newer yfinance versions), flatten them
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+        
+    # Sort and keep the last N candles
+    df = df.sort_index().tail(limit)
     return df
 
 
@@ -72,9 +48,9 @@ def poll_once():
     print("\n=== Polling cycle started ===")
     for ticker in TICKERS:
         try:
-            print(f"Fetching latest data for {ticker} from Binance...")
-            # Fetch latest 15-minute candles
-            df = fetch_latest_candles_binance(ticker, interval="15m", limit=5)
+            print(f"Fetching latest data for {ticker} from Yahoo Finance...")
+            # Fetch latest 15-minute candles from Yahoo Finance
+            df = fetch_latest_candles_yfinance(ticker, interval="15m", limit=5)
             
             # Upsert into Postgres ohlcv table
             save_to_postgres(df, ticker)
