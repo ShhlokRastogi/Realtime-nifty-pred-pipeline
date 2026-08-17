@@ -7,7 +7,8 @@ Run: python src/poll.py
 import time
 import requests
 import pandas as pd
-from config import TICKERS
+import psycopg2
+from config import TICKERS, DB_CONFIG
 from ingest import save_to_postgres
 from feature_store import run_feature_store
 
