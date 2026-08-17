@@ -75,6 +75,17 @@ if 'crypto_mlops_drift_drift_detected' in REGISTRY._names_to_collectors:
 else:
     DRIFT_GAUGE = Gauge("drift_detected", "Performance drift detected (accuracy < 50%)", ["ticker"], namespace="crypto_mlops", subsystem="drift")
 
+# Expose predicted vs true directions (1.0 = UP, 0.0 = DOWN)
+if 'crypto_mlops_prediction_predicted_direction' in REGISTRY._names_to_collectors:
+    PRED_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_predicted_direction']
+else:
+    PRED_DIR_GAUGE = Gauge("predicted_direction", "Latest predicted direction (1=UP, 0=DOWN)", ["ticker"], namespace="crypto_mlops", subsystem="prediction")
+
+if 'crypto_mlops_prediction_true_direction' in REGISTRY._names_to_collectors:
+    TRUTH_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_true_direction']
+else:
+    TRUTH_DIR_GAUGE = Gauge("true_direction", "Latest true direction (1=UP, 0=DOWN)", ["ticker"], namespace="crypto_mlops", subsystem="prediction")
+
 def evaluate_live_accuracy(ticker: str, current_time: pd.Timestamp, current_close: float):
     """
     Checks if a prediction was logged for the previous candle. 
@@ -102,6 +113,10 @@ def evaluate_live_accuracy(ticker: str, current_time: pd.Timestamp, current_clos
         
         print(f"  [EVAL] {ticker}: Pred at {prev_time_str} was {prediction}, Actual was {actual} ({'CORRECT' if is_correct else 'INCORRECT'})")
         
+        # Expose directional metrics (1.0 = UP, 0.0 = DOWN)
+        PRED_DIR_GAUGE.labels(ticker=ticker).set(1.0 if prediction == "UP" else 0.0)
+        TRUTH_DIR_GAUGE.labels(ticker=ticker).set(1.0 if actual == "UP" else 0.0)
+        
         # Push outcome to Redis rolling window (max 100)
         history_key = f"history:{ticker}"
         r.lpush(history_key, is_correct)
@@ -127,10 +142,6 @@ def evaluate_live_accuracy(ticker: str, current_time: pd.Timestamp, current_clos
             DRIFT_GAUGE.labels(ticker=ticker).set(1.0)
         else:
             DRIFT_GAUGE.labels(ticker=ticker).set(0.0)
-    else:
-        # Default accuracy and drift to neutral state if no history exists yet
-        ACCURACY_GAUGE.labels(ticker=ticker).set(0.53) # Incumbent baseline
-        DRIFT_GAUGE.labels(ticker=ticker).set(0.0)
 
 def generate_live_prediction(ticker: str, current_time: pd.Timestamp, current_close: float):
     """

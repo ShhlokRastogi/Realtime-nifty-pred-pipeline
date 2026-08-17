@@ -65,17 +65,27 @@ else:
     )
     # TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_p_value{ticker="BTC-USD",feature="lagged_return_1"}
 
-if 'crypto_mlops_drift_p_value' in REGISTRY._names_to_collectors:
-    PVALUE_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_drift_p_value']
+if 'crypto_mlops_prediction_predicted_direction' in REGISTRY._names_to_collectors:
+    PRED_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_predicted_direction']
 else:
-    PVALUE_GAUGE = Gauge(
-        "p_value",
-        "P-value for a given feature and ticker",
-        ["ticker", "feature"],
+    PRED_DIR_GAUGE = Gauge(
+        "predicted_direction",
+        "Latest predicted direction (1=UP, 0=DOWN)",
+        ["ticker"],
         namespace="crypto_mlops",
-        subsystem="drift",
+        subsystem="prediction",
     )
-    # TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_p_value{ticker="BTC-USD",feature="lagged_return_1"}
+
+if 'crypto_mlops_prediction_true_direction' in REGISTRY._names_to_collectors:
+    TRUTH_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_true_direction']
+else:
+    TRUTH_DIR_GAUGE = Gauge(
+        "true_direction",
+        "Latest true direction (1=UP, 0=DOWN)",
+        ["ticker"],
+        namespace="crypto_mlops",
+        subsystem="prediction",
+    )
 
 if 'crypto_mlops_prediction_predictions_total' in REGISTRY._names_to_collectors:
     PREDICTION_COUNTER = REGISTRY._names_to_collectors['crypto_mlops_prediction_predictions_total']
