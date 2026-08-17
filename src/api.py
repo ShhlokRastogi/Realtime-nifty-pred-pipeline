@@ -13,7 +13,9 @@ import joblib
 
 # Load the local backup model dynamically relative to this file's location
 base_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(base_dir, "..", "models", "xgb_model.pkl")
+model_path = os.path.join(base_dir, "..", "models", "active_model.pkl")
+if not os.path.exists(model_path):
+    model_path = os.path.join(base_dir, "..", "models", "xgb_model.pkl")
 model = joblib.load(model_path)
 r = redis.Redis(**REDIS_CONFIG)
 
@@ -120,29 +122,119 @@ from fastapi.responses import HTMLResponse
 
 @app.get("/promote", response_class=HTMLResponse)
 def promote_page():
-    """Renders a beautiful model comparison page showing local model details and Git-Ops PR links."""
+    """Renders a beautiful model comparison page showing active model details and version history from Postgres."""
+    import psycopg2
+    from config import DB_CONFIG
     import json
     
-    # Define paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    meta_path = os.path.join(base_dir, "..", "models", "model_metadata.json")
+    # 1. Query the database for the active model and history
+    active_model = None
+    history = []
     
-    # Load metadata with a fallback for the baseline model
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-        except Exception:
-            meta = {}
-    else:
-        # Default baseline model metadata
-        meta = {
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        
+        # Fetch the active model (marked 'active')
+        cur.execute("""
+            SELECT version, model_type, accuracy, incumbent_accuracy, dummy_accuracy, parameters, timestamp
+            FROM models
+            WHERE status = 'active'
+            ORDER BY timestamp DESC
+            LIMIT 1;
+        """)
+        active_row = cur.fetchone()
+        if active_row:
+            active_model = {
+                "version": active_row[0],
+                "model_type": active_row[1],
+                "accuracy": active_row[2],
+                "incumbent_accuracy": active_row[3],
+                "dummy_accuracy": active_row[4],
+                "parameters": active_row[5] if isinstance(active_row[5], dict) else json.loads(active_row[5] or "{}"),
+                "timestamp": active_row[6].strftime("%Y-%m-%d %H:%M:%S") if active_row[6] else "N/A"
+            }
+            
+        # Fetch the last 5 registered models (history)
+        cur.execute("""
+            SELECT version, model_type, accuracy, incumbent_accuracy, dummy_accuracy, timestamp, status
+            FROM models
+            ORDER BY timestamp DESC
+            LIMIT 5;
+        """)
+        history_rows = cur.fetchall()
+        for h in history_rows:
+            history.append({
+                "version": h[0],
+                "model_type": h[1],
+                "accuracy": h[2],
+                "incumbent_accuracy": h[3],
+                "dummy_accuracy": h[4],
+                "timestamp": h[5].strftime("%Y-%m-%d %H:%M:%S") if h[5] else "N/A",
+                "status": h[6]
+            })
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Database error loading model history: {e}")
+        
+    # 2. Fall back to local metadata JSON if database is empty
+    if not active_model:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        meta_path = os.path.join(base_dir, "..", "models", "model_metadata.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r") as f:
+                    meta = json.load(f)
+                    active_model = {
+                        "version": meta.get("version", 1),
+                        "model_type": meta.get("model_type", "xgboost"),
+                        "accuracy": meta.get("accuracy", 0.5248),
+                        "incumbent_accuracy": meta.get("incumbent_accuracy", 0.0),
+                        "dummy_accuracy": meta.get("dummy_accuracy", 0.4898),
+                        "timestamp": meta.get("timestamp", "N/A"),
+                        "parameters": meta.get("parameters", {})
+                    }
+            except Exception:
+                pass
+                
+    # Define fallback defaults if metadata read also failed
+    if not active_model:
+        active_model = {
             "version": 1,
+            "model_type": "xgboost",
             "accuracy": 0.5248,
+            "incumbent_accuracy": 0.0,
             "dummy_accuracy": 0.4898,
             "timestamp": "2026-08-15 12:00:00",
             "parameters": {"max_depth": 3, "n_estimators": 69}
         }
+        history = [{
+            "version": 1,
+            "model_type": "xgboost",
+            "accuracy": 0.5248,
+            "incumbent_accuracy": 0.0,
+            "dummy_accuracy": 0.4898,
+            "timestamp": "2026-08-15 12:00:00",
+            "status": "active"
+        }]
+
+    # Render History Rows HTML
+    history_html = ""
+    for h in history:
+        status_class = h["status"].lower()
+        history_html += f"""
+        <tr>
+            <td>Version {h["version"]}</td>
+            <td style="text-transform: uppercase; font-weight: 500;">{h["model_type"]}</td>
+            <td style="color: #10b981; font-weight: 600;">{h["accuracy"]:.4f}</td>
+            <td>{h["incumbent_accuracy"]:.4f}</td>
+            <td>{h["dummy_accuracy"]:.4f}</td>
+            <td style="font-size: 0.85rem; color: #94a3b8;">{h["timestamp"]}</td>
+            <td><span class="status-badge {status_class}">{h["status"].upper()}</span></td>
+        </tr>
+        """
 
     # HTML UI Design aligned with Git-Ops flow
     html_content = f"""
@@ -160,13 +252,21 @@ def promote_page():
                 padding: 40px;
             }}
             .container {{
-                max-width: 900px;
+                max-width: 950px;
                 margin: 0 auto;
             }}
             h1 {{
                 font-size: 2.2rem;
                 margin-bottom: 5px;
                 font-weight: 700;
+            }}
+            h2 {{
+                font-size: 1.5rem;
+                margin-top: 40px;
+                margin-bottom: 15px;
+                font-weight: 600;
+                border-bottom: 1px solid #334155;
+                padding-bottom: 10px;
             }}
             .subtitle {{
                 color: #94a3b8;
@@ -246,6 +346,49 @@ def promote_page():
                 font-size: 0.95rem;
                 line-height: 1.5;
             }}
+            
+            /* Table Styling */
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                background-color: #1e293b;
+                border-radius: 12px;
+                overflow: hidden;
+                border: 1px solid #334155;
+                margin-bottom: 40px;
+            }}
+            th, td {{
+                padding: 14px 18px;
+                text-align: left;
+                border-bottom: 1px solid #334155;
+            }}
+            th {{
+                background-color: #1e293b;
+                color: #94a3b8;
+                font-weight: 600;
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }}
+            tr:last-child td {{
+                border-bottom: none;
+            }}
+            .status-badge {{
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 0.7rem;
+                font-weight: 700;
+                letter-spacing: 0.03em;
+            }}
+            .status-badge.active {{
+                background-color: #10b98120;
+                color: #10b981;
+            }}
+            .status-badge.archived {{
+                background-color: #64748b20;
+                color: #94a3b8;
+            }}
         </style>
     </head>
     <body>
@@ -257,26 +400,26 @@ def promote_page():
                 <!-- Incumbent Card -->
                 <div class="card">
                     <span class="badge prod">PRODUCTION (Active)</span>
-                    <div class="version">Model Version {meta.get("version", 1)}</div>
+                    <div class="version">Model Version {active_model["version"]}</div>
                     <div class="metric-row">
-                        <span class="metric-label">XGBoost Accuracy</span>
-                        <span class="metric-value">{meta.get("accuracy", 0.5248):.4f}</span>
+                        <span class="metric-label">Model Type</span>
+                        <span class="metric-value" style="text-transform: uppercase;">{active_model["model_type"]}</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Accuracy</span>
+                        <span class="metric-value" style="color: #10b981;">{active_model["accuracy"]:.4f}</span>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Baseline Accuracy</span>
-                        <span class="metric-value">{meta.get("dummy_accuracy", 0.4898):.4f}</span>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">Number of Trees</span>
-                        <span class="metric-value">{meta.get("parameters", {}).get("n_estimators", "N/A")}</span>
+                        <span class="metric-value">{active_model["dummy_accuracy"]:.4f}</span>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Max Depth</span>
-                        <span class="metric-value">{meta.get("parameters", {}).get("max_depth", "N/A")}</span>
+                        <span class="metric-value">{active_model["parameters"].get("max_depth", "N/A")}</span>
                     </div>
                     <div class="metric-row" style="border-bottom: none;">
-                        <span class="metric-label">Deployed At</span>
-                        <span class="metric-value" style="font-size: 0.8rem;">{meta.get("timestamp", "N/A")}</span>
+                        <span class="metric-label">Registered At</span>
+                        <span class="metric-value" style="font-size: 0.8rem;">{active_model["timestamp"]}</span>
                     </div>
                 </div>
                 
@@ -294,6 +437,24 @@ def promote_page():
             <a href="https://github.com/ShhlokRastogi/self-healing-crypto-pipeline/pulls" target="_blank" class="button">
                 Review and Merge Pull Requests on GitHub
             </a>
+            
+            <h2>Model Registry History</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>Type</th>
+                        <th>Accuracy</th>
+                        <th>Incumbent Acc.</th>
+                        <th>Baseline Acc.</th>
+                        <th>Registered At</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {history_html}
+                </tbody>
+            </table>
         </div>
     </body>
     </html>
