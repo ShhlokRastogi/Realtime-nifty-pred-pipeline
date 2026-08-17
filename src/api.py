@@ -4,7 +4,7 @@ import redis
 from fastapi import FastAPI, HTTPException, Response
 from config import REDIS_CONFIG, TICKERS
 from prometheus_client import REGISTRY, Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from drift import run_drift_check, FEATURE_COLS
+# App initialization
 
 app = FastAPI(title="Crypto Price Prediction API")
 import os
@@ -52,6 +52,18 @@ else:
         subsystem="drift",
     )
     # TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_drift_detected{ticker="BTC-USD"}
+
+if 'crypto_mlops_drift_live_accuracy' in REGISTRY._names_to_collectors:
+    ACCURACY_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_drift_live_accuracy']
+else:
+    ACCURACY_GAUGE = Gauge(
+        "live_accuracy",
+        "Rolling accuracy of the model",
+        ["ticker"],
+        namespace="crypto_mlops",
+        subsystem="drift",
+    )
+    # TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_p_value{ticker="BTC-USD",feature="lagged_return_1"}
 
 if 'crypto_mlops_drift_p_value' in REGISTRY._names_to_collectors:
     PVALUE_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_drift_p_value']
@@ -114,27 +126,8 @@ def health():
 
 @app.get("/metrics")
 def metrics():
-    import gc
-    # Loop through our active tickers (BTC-USD, ETH-USD)
-    for t in TICKERS:
-        # Run the drift calculations
-        drift_result = run_drift_check(t)
-        
-        if drift_result.get("status") == "success":
-            # Set overall drift status (1.0 if True, 0.0 if False)
-            drift_detected = 1.0 if drift_result["drift_detected"] else 0.0
-            DRIFT_GAUGE.labels(ticker=t).set(drift_detected)
-            
-            # Set the individual p-values for each feature
-            p_values = drift_result["p_values"]
-            for feature_name, p_val in p_values.items():
-                PVALUE_GAUGE.labels(ticker=t, feature=feature_name).set(p_val)
-                
-        # Clean up memory immediately after each ticker calculation
-        del drift_result
-        gc.collect()
-                
-    # Return the metrics in the raw text format that Prometheus understands
+    # Gauges are updated by the background poller thread directly in memory.
+    # Return the metrics in the raw text format that Prometheus understands.
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
