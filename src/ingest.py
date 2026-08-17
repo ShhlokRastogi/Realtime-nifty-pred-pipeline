@@ -78,32 +78,49 @@ def save_to_csv(df: pd.DataFrame, ticker: str) -> None:
     df.to_csv(file_path, index=True)
 
 
+from psycopg2.extras import execute_values
+import numpy as np
+from psycopg2.extensions import register_adapter, AsIs
+# Register numpy adapters to prevent "schema np does not exist" formatting errors
+register_adapter(np.float64, AsIs)
+register_adapter(np.int64, AsIs)
+
 def save_to_postgres(df: pd.DataFrame, ticker: str) -> None:
     conn = psycopg2.connect(**DB_CONFIG)
     cursor = conn.cursor()
 
-    for date, rows in df.iterrows():
-        cursor.execute(
-            """
-            INSERT INTO ohlcv (ticker, date, open, high, low, close, volume)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (ticker, date) DO UPDATE
-            SET open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume;
-            """,
-            (
-                ticker,
-                date,
-                rows['Open'],
-                rows['High'],
-                rows['Low'],
-                rows['Close'],
-                rows['Volume']
-            )
+    # Convert DataFrame into a list of tuples for bulk insertion
+    tuples = [
+        (
+            ticker,
+            date.to_pydatetime() if hasattr(date, 'to_pydatetime') else date,
+            float(rows['Open']),
+            float(rows['High']),
+            float(rows['Low']),
+            float(rows['Close']),
+            float(rows['Volume'])
         )
+        for date, rows in df.iterrows()
+    ]
+
+    query = """
+        INSERT INTO ohlcv (ticker, date, open, high, low, close, volume)
+        VALUES %s
+        ON CONFLICT (ticker, date) DO UPDATE
+        SET open = EXCLUDED.open,
+            high = EXCLUDED.high,
+            low = EXCLUDED.low,
+            close = EXCLUDED.close,
+            volume = EXCLUDED.volume;
+    """
+
+    # Run bulk insertion in batches of 10,000 to prevent statement timeouts over WAN
+    batch_size = 10000
+    for i in range(0, len(tuples), batch_size):
+        batch = tuples[i : i + batch_size]
+        print(f"  Inserting batch {i // batch_size + 1} ({len(batch)} rows)...")
+        execute_values(cursor, query, batch)
+    
     conn.commit()
     cursor.close()
     conn.close()
