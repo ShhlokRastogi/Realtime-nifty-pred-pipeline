@@ -34,6 +34,13 @@ def poller_loop():
 
 @app.on_event("startup")
 def startup_event():
+    # Pre-initialize gauges so they exist on Prometheus boot
+    for t in TICKERS:
+        DRIFT_GAUGE.labels(ticker=t).set(0.0)
+        ACCURACY_GAUGE.labels(ticker=t).set(0.53) # Neutral baseline incumbent accuracy
+        PRED_DIR_GAUGE.labels(ticker=t).set(0.0)
+        TRUTH_DIR_GAUGE.labels(ticker=t).set(0.0)
+        
     # Run the poller loop in a background daemon thread
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()

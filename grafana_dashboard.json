@@ -43,7 +43,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "crypto_mlops_drift_drift_detected{ticker=\"BTC-USD\"}",
+          "expr": "last_over_time(crypto_mlops_drift_drift_detected{ticker=\"BTC-USD\"}[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -117,7 +117,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "crypto_mlops_drift_drift_detected{ticker=\"ETH-USD\"}",
+          "expr": "last_over_time(crypto_mlops_drift_drift_detected{ticker=\"ETH-USD\"}[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
