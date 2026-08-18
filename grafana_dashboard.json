@@ -16,7 +16,7 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "liveNow": false,
@@ -25,7 +25,7 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 8,
+        "w": 5,
         "x": 0,
         "y": 0
       },
@@ -99,8 +99,77 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 8,
+        "w": 5,
+        "x": 5,
+        "y": 0
+      },
+      "id": 8,
+      "title": "BTC-USD Live Accuracy",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "default"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "default"
+          },
+          "editorMode": "code",
+          "expr": "last_over_time(crypto_mlops_drift_live_accuracy{ticker=\"BTC-USD\"}[15m])",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.50
+              },
+              {
+                "color": "green",
+                "value": 0.55
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 10,
         "y": 0
       },
       "id": 2,
@@ -173,12 +242,12 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
+        "w": 5,
+        "x": 15,
         "y": 0
       },
-      "id": 3,
-      "title": "Total Predictions Served",
+      "id": 9,
+      "title": "ETH-USD Live Accuracy",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -191,7 +260,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "sum(crypto_mlops_prediction_predictions_total) or vector(0)",
+          "expr": "last_over_time(crypto_mlops_drift_live_accuracy{ticker=\"ETH-USD\"}[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -199,15 +268,24 @@
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "percentunit",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.50
+              },
+              {
+                "color": "green",
+                "value": 0.55
               }
             ]
           }
@@ -232,13 +310,74 @@
     {
       "collapsed": false,
       "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "id": 3,
+      "title": "Total Predictions Served",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "default"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "default"
+          },
+          "editorMode": "code",
+          "expr": "sum(crypto_mlops_prediction_predictions_total)",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed"
+          },
+          "fixedColor": "blue",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 4
       },
       "id": 4,
-      "title": "BTC-USD Live Model Accuracy",
+      "title": "BTC-USD Accuracy Trend",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -252,16 +391,21 @@
           },
           "editorMode": "code",
           "expr": "crypto_mlops_drift_live_accuracy{ticker=\"BTC-USD\"}",
-          "legendFormat": "Accuracy",
+          "legendFormat": "Rolling Accuracy",
           "range": true,
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth"
+            "lineInterpolation": "smooth",
+            "fillOpacity": 15,
+            "lineWidth": 3
           },
           "thresholds": {
             "mode": "absolute",
@@ -281,7 +425,9 @@
       },
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+            "last"
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -297,7 +443,7 @@
         "y": 4
       },
       "id": 5,
-      "title": "ETH-USD Live Model Accuracy",
+      "title": "ETH-USD Accuracy Trend",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -311,16 +457,21 @@
           },
           "editorMode": "code",
           "expr": "crypto_mlops_drift_live_accuracy{ticker=\"ETH-USD\"}",
-          "legendFormat": "Accuracy",
+          "legendFormat": "Rolling Accuracy",
           "range": true,
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth"
+            "lineInterpolation": "smooth",
+            "fillOpacity": 15,
+            "lineWidth": 3
           },
           "thresholds": {
             "mode": "absolute",
@@ -340,7 +491,9 @@
       },
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+            "last"
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -388,20 +541,15 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "stepAfter"
-          },
           "min": 0,
           "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
@@ -456,20 +604,15 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "stepAfter"
-          },
           "min": 0,
           "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2
+          },
+          "color": {
+            "mode": "palette-classic"
           }
         },
         "overrides": []
