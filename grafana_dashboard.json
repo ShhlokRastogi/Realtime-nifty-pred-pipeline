@@ -542,17 +542,60 @@
       "fieldConfig": {
         "defaults": {
           "min": 0,
-          "max": 1,
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
+          "max": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Predicted (1=UP, 0=DOWN)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 10
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Actual (1=UP, 0=DOWN)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -605,17 +648,60 @@
       "fieldConfig": {
         "defaults": {
           "min": 0,
-          "max": 1,
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
+          "max": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Predicted (1=UP, 0=DOWN)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 10
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Actual (1=UP, 0=DOWN)"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
