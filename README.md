@@ -32,7 +32,7 @@ graph TD
 
 ---
 
-## 🚀 Core Features
+##  Core Features
 
 ### 1. Real-Time Ingestion & Streaming Feature Store
 *   **Data Source:** Ingests live 15-minute price candles from the **Coinbase Exchange API** (US-safe, rate-limit-resistant).
@@ -63,7 +63,7 @@ Instead of static statistical data-drift (KS-test), the system implements **Perf
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```text
 crypto/
