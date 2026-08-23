@@ -1,0 +1,5 @@
+outs:
+- md5: 73c63858a38fcc42dd723035fb79e9ff
+  size: 485233
+  hash: md5
+  path: vix_raw.csv

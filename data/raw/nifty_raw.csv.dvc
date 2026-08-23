@@ -1,0 +1,5 @@
+outs:
+- md5: a31389ce09ca9fffbba59fecbc688887
+  size: 401624
+  hash: md5
+  path: nifty_raw.csv

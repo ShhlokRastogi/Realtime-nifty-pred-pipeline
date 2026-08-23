@@ -1,30 +1,30 @@
 """
-Shared configuration constants for the crypto prediction pipeline.
+Shared configuration constants for the market volatility prediction pipeline.
 """
 
 # ── Tickers ──────────────────────────────────────────────
-from prometheus_client import Gauge
-
-
-TICKERS = ["BTC-USD", "ETH-USD"]
+# ^NSEI: Nifty 50 Index (Target)
+# ^INDIAVIX: India VIX (Expectation Index)
+TICKERS = ["^NSEI", "^INDIAVIX"]
 
 # ── Date range for historical pull ───────────────────────
-# ~2 years of daily data for training + evaluation
-HIST_START = "2024-08-01"
-HIST_END = "2026-08-11"  # yesterday
+HIST_START = "2024-08-22"
+HIST_END = "2026-08-22"
 
 # ── Feature parameters ───────────────────────────────────
 RSI_PERIOD = 14
-SMA_SHORT = 10
-SMA_LONG = 50
-VOLATILITY_WINDOW = 20      # rolling std of log-returns
-VOLUME_DELTA_WINDOW = 20    # rolling mean window for volume
-LAGGED_RETURN_PERIODS = [1, 3, 5]  # days to look back
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+BB_WINDOW = 20
+ATR_WINDOW = 14
+FFD_D = 0.40
+FFD_MAX_LAGS = 60
 
-# ── Train/test split ────────────────────────────────────
-# Time-series split: everything before this date = train, after = test
-# Roughly last 3 months reserved for testing
-TEST_CUTOFF = "2026-05-01"
+# ── Volatility Forecasting ──────────────────────────────
+VOL_FORECAST_WINDOW = 5  # Predict next 5 hours of volatility
+LOOKBACK_SIZE = 1200     # Training history per rolling step
+SEQ_LEN = 42             # Sequence length (7 trading days)
 
 # ── Data paths ───────────────────────────────────────────
 RAW_DATA_DIR = "data/raw"
@@ -35,43 +35,23 @@ RANDOM_SEED = 42
 
 import os
 
-# ── Database (Postgres) ─────────────────────────────────
-# Reads environment variables for cloud deployment, falls back to local docker configs
+# ── Database (Postgres / Supabase) ─────────────────────
+# Reads from Render/Supabase cloud variables in production
+# Falls back to local docker-compose settings in development
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", "5432")),
+    "port": os.getenv("DB_PORT", "5432"),
     "user": os.getenv("DB_USER", "myuser"),
     "password": os.getenv("DB_PASSWORD", "mypassword"),
     "dbname": os.getenv("DB_NAME", "crypto_features"),
 }
 
-# ── Cache (Redis) ────────────────────────────────────────
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+# ── Cache (Redis / Upstash) ────────────────────────────
+# Reads from Upstash serverless variables in production
+# Falls back to local redis service in development
 REDIS_CONFIG = {
-    "host": REDIS_HOST,
+    "host": os.getenv("REDIS_HOST", "localhost"),
     "port": int(os.getenv("REDIS_PORT", "6379")),
     "password": os.getenv("REDIS_PASSWORD", None),
     "db": 0,
 }
-
-# Automatically enable SSL for cloud Redis (Upstash) connections
-if "localhost" not in REDIS_HOST:
-    REDIS_CONFIG["ssl"] = True
-    REDIS_CONFIG["ssl_cert_reqs"] = "none"
-
-DRIFT_GAUGE = Gauge(
-    "drift_detected",                          # name
-    "Drift detected for a given ticker",       # documentation
-    ["ticker"],                                # labelnames
-    namespace="crypto_mlops",
-    subsystem="drift",
-)
-# TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_drift_detected{ticker="BTC-USD"}
-PVALUE_GAUGE = Gauge(
-    "p_value",                                 # name
-    "P-value for a given feature and ticker",  # documentation
-    ["ticker", "feature"],                     # labelnames
-    namespace="crypto_mlops",
-    subsystem="drift",
-)
-# TO QUERY IN PROMQL USE FORMAT: crypto_mlops_drift_p_value{ticker="BTC-USD",feature="lagged_return_1"}

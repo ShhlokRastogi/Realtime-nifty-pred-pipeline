@@ -9,8 +9,7 @@ venv/
 ENV/
 
 # Data and Models
-data/raw/*.csv
-data/processed/
+
 mlruns/
 mlflow.db
 mlflow.db-journal
