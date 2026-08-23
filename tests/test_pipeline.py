@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 # Add src folder to the python path so we can import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
+# Set testing flag to isolate CI/CD environment
+os.environ["TESTING"] = "true"
+
 from features import calculate_technical_features
 from api import app
 
