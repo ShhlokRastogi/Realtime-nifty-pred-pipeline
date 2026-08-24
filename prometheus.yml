@@ -11,5 +11,6 @@ remote_write:
 scrape_configs:
   - job_name: 'nifty-volatility-pipeline'
     metrics_path: '/metrics'
+    scheme: 'https'
     static_configs:
-      - targets: ["app:8000"]
+      - targets: ["crypto-pipeline-api.onrender.com:443"]
