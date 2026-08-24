@@ -124,16 +124,12 @@ DRIFT_GAUGE = REGISTRY._names_to_collectors.get('drift_detected') or Gauge("drif
 # API ENDPOINTS
 # =====================================================================
 
-@app.get("/predict/{ticker}")
-def predict(ticker: str):
-    """Fetches the latest volatility prediction, using Upstash Redis cache first."""
-    if ticker != "^NSEI":
-        raise HTTPException(status_code=404, detail="Only Nifty 50 Index (^NSEI) is supported.")
-        
+def fetch_latest_nifty_forecast():
+    """Helper to fetch the latest Nifty 50 volatility forecast from cache or database."""
     # If in testing environment, return mock Nifty volatility schema immediately
     if os.getenv("TESTING") == "true":
         return {
-            "ticker": ticker,
+            "ticker": "^NSEI",
             "current_price": 24252.00,
             "current_vix": 11.22,
             "current_realized_vol": 0.0785,
@@ -167,7 +163,7 @@ def predict(ticker: str):
             raise HTTPException(status_code=404, detail="No predictions found in database.")
             
         result = {
-            "ticker": ticker,
+            "ticker": "^NSEI",
             "current_price": float(row[0]),
             "current_vix": float(row[1]),
             "current_realized_vol": float(row[2]),
@@ -183,6 +179,11 @@ def predict(ticker: str):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+@app.get("/predict/nifty")
+def predict_nifty():
+    """Dedicated endpoint to get the live Nifty 50 volatility forecast."""
+    return fetch_latest_nifty_forecast()
 
 @app.get("/health")
 def health():

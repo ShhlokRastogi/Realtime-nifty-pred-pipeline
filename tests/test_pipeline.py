@@ -62,7 +62,7 @@ def test_api_predict():
     """
     Verify that our Nifty predict endpoint works and returns the correct response schema.
     """
-    response = client.get("/predict/^NSEI")
+    response = client.get("/predict/nifty")
     if response.status_code == 200:
         data = response.json()
         assert "ticker" in data
