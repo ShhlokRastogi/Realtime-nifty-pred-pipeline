@@ -20,6 +20,28 @@ services:
         volumes:
             - ./docker_data/redis:/data
 
+    app:
+        build: .
+        container_name: nifty_vol_api
+        restart: always
+        ports:
+            - "8000:8000"
+        environment:
+            - PORT=8000
+            - DB_HOST=db
+            - DB_PORT=5432
+            - DB_USER=myuser
+            - DB_PASSWORD=mypassword
+            - DB_NAME=crypto_features
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+        volumes:
+            - ./models:/app/models
+            - ./data:/app/data
+        depends_on:
+            - db
+            - redis
+
     prometheus:
         image: prom/prometheus:latest
         container_name: my_prometheus
@@ -27,6 +49,8 @@ services:
             - ./prometheus.yml:/etc/prometheus/prometheus.yml
         ports:
             - "9090:9090"
+        depends_on:
+            - app
 
     grafana:
         image: grafana/grafana:latest
