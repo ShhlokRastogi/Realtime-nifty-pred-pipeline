@@ -1,102 +1,72 @@
 import numpy as np
 import pandas as pd
-from ta.momentum import RSIIndicator
-from config import (
-    RSI_PERIOD, SMA_SHORT, SMA_LONG,
-    VOLATILITY_WINDOW, VOLUME_DELTA_WINDOW,
-    LAGGED_RETURN_PERIODS
-)
+from config import FFD_D, FFD_MAX_LAGS
 
-def lagged_returns(df: pd.DataFrame, periods: list) -> pd.DataFrame:
-    """
-    Calculate lagged returns for specified periods.
+def calculate_technical_features(df_merged: pd.DataFrame) -> pd.DataFrame:
+    """Calculates all 16 technical, temporal, and volatility features."""
+    df = df_merged.copy()
+    close = df['close']
+    high = df['high']
+    low = df['low']
+    volume = df['volume']
+    
+    # RSI (14)
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    df['rsi'] = 100 - (100 / (1 + rs))
+    
+    # MACD Diff Pct
+    macd = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    signal = macd.ewm(span=9, adjust=False).mean()
+    df['macd_diff_pct'] = (macd - signal) / (close + 1e-9)
+    
+    # Volatility Indicators
+    bb_mid = close.rolling(window=20).mean()
+    bb_std = close.rolling(window=20).std()
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+    df['bb_width'] = (bb_upper - bb_lower) / (bb_mid + 1e-9)
+    
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df['atr_pct'] = tr.rolling(window=14).mean() / (close + 1e-9)
+    df['hl_spread'] = (high - low) / (close + 1e-9)
+    df['volume_delta'] = volume.diff() / (volume.shift(1) + 1e-9)
+    df['lagged_return_1'] = close.pct_change(1)
+    
+    # Realized Volatility Lags
+    df['realized_vol_5'] = df['lagged_return_1'].rolling(5).std()
+    df['realized_vol_10'] = df['lagged_return_1'].rolling(10).std()
+    df['realized_vol_20'] = df['lagged_return_1'].rolling(20).std()
+    
+    # Time Cyclical Features
+    hours = df.index.hour
+    days = df.index.dayofweek
+    df['sin_hour'] = np.sin(2 * np.pi * hours / 24.0)
+    df['cos_hour'] = np.cos(2 * np.pi * hours / 24.0)
+    df['sin_day'] = np.sin(2 * np.pi * days / 7.0)
+    df['cos_day'] = np.cos(2 * np.pi * days / 7.0)
+    
+    return df.dropna()
 
-    Parameters:
-    df (pd.DataFrame): DataFrame containing 'close' prices.
-    periods (list): List of periods for which to calculate lagged returns.
+def get_weights_ffd(d, size):
+    w = [1.0]
+    for k in range(1, size):
+        w_k = -w[-1] / k * (d - k + 1)
+        w.append(w_k)
+    return np.array(w)
 
-    Returns:
-    pd.DataFrame: DataFrame with lagged return columns added.
-    """
-    for period in periods:
-        df[f'lagged_return_{period}'] = df['close'].pct_change(periods=period)
-    return df
-
-def sma_crossover(df: pd.DataFrame, short_window: int, long_window: int) -> pd.DataFrame:
-    """
-    Calculate Simple Moving Average (SMA) crossover signals.
-
-    Parameters:
-    df (pd.DataFrame): DataFrame containing 'close' prices.
-    short_window (int): Window size for the short-term SMA.
-    long_window (int): Window size for the long-term SMA.
-
-    Returns:
-    pd.DataFrame: DataFrame with SMA crossover signals added.
-    """
-    df['sma_short'] = df['close'].rolling(window=short_window).mean()
-    df['sma_long'] = df['close'].rolling(window=long_window).mean()
-    df['sma_crossover'] = df['sma_short'] - df['sma_long']
-    return df
-
-def rolling_volatility(df: pd.DataFrame, window: int) -> pd.DataFrame:
-    """
-    Calculate rolling volatility (standard deviation of returns).
-
-    Parameters:
-    df (pd.DataFrame): DataFrame containing 'close' prices.
-    window (int): Window size for calculating rolling volatility.
-
-    Returns:
-    pd.DataFrame: DataFrame with rolling volatility added.
-    """
-    df['returns'] = df['close'].pct_change()
-    df['rolling_volatility'] = df['returns'].rolling(window=window).std()
-    return df
-
-def volume_delta(df: pd.DataFrame, window: int) -> pd.DataFrame:
-    """
-    Calculate volume delta (change in volume over a specified window).
-
-    Parameters:
-    df (pd.DataFrame): DataFrame containing 'volume' data.
-    window (int): Window size for calculating volume delta.
-
-    Returns:
-    pd.DataFrame: DataFrame with volume delta added.
-    """
-    vol_mean= df['volume'].rolling(window=window).mean()
-    df['volume_delta'] = (df['volume'] - vol_mean)/vol_mean
-    return df
-
-def rsi(df: pd.DataFrame, period: int) -> pd.DataFrame:
-    """
-    Calculate Relative Strength Index (RSI).
-
-    Parameters:
-    df (pd.DataFrame): DataFrame containing 'close' prices.
-    period (int): Period for calculating RSI.
-
-    Returns:
-    pd.DataFrame: DataFrame with RSI added.
-    """
-    rsi_indicator = RSIIndicator(close=df['close'], window=period)
-    df['rsi'] = rsi_indicator.rsi()
-    return df
-
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = df.columns.str.lower()
-    df = lagged_returns(df, LAGGED_RETURN_PERIODS)
-    df = sma_crossover(df, SMA_SHORT, SMA_LONG)
-    df = rolling_volatility(df, VOLATILITY_WINDOW)
-    df = volume_delta(df, VOLUME_DELTA_WINDOW)
-    df = rsi(df, RSI_PERIOD)
-    df = df.drop(columns=['sma_short', 'sma_long', 'returns'])  # intermediate cols
-    df = df.dropna()
-    return df
-
-if __name__ == "__main__":
-    data = pd.read_csv("data/raw/BTC-USD.csv", index_col=0, parse_dates=True)
-    df = build_features(data)
-    print(f"Features built: {df.shape[0]} rows, {df.shape[1]} columns")
-    print(f"Columns: {list(df.columns)}")
+def apply_fractional_differentiation(df, d=FFD_D, max_lags=FFD_MAX_LAGS):
+    series = df['close']
+    w = get_weights_ffd(d, max_lags)
+    w_rev = w[::-1]
+    res = []
+    for i in range(max_lags - 1, len(series)):
+        res.append(np.dot(series.iloc[i - max_lags + 1 : i + 1], w_rev))
+    df_res = df.iloc[max_lags - 1 :].copy()
+    df_res['close_fracdiff'] = res
+    return df_res

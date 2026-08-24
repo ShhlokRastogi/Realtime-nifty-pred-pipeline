@@ -1,55 +1,82 @@
-"""
-Database schema setup for the crypto prediction pipeline.
-Creates the ohlcv and features tables in Postgres.
-
-Run once: python src/db_schema.py
-"""
 import psycopg2
 from config import DB_CONFIG
 
-
-def create_tables():
-    """Create the ohlcv and features tables if they don't exist."""
+def initialize_database_schema():
+    """Creates raw data, features, training matrix, forecasts, and drift tables in Supabase."""
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
-
-    # Table 1: Raw OHLCV price data
+    
+    # 1. Table for storing raw ingested Nifty 50 and India VIX hourly candles
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS ohlcv (
-            id          SERIAL PRIMARY KEY,
-            ticker      VARCHAR(20) NOT NULL,
-            date        TIMESTAMP NOT NULL,
-            open        DOUBLE PRECISION,
-            high        DOUBLE PRECISION,
-            low         DOUBLE PRECISION,
-            close       DOUBLE PRECISION,
-            volume      DOUBLE PRECISION,
-            UNIQUE(ticker, date)  -- prevent duplicate rows for same ticker+date
+        CREATE TABLE IF NOT EXISTS nifty_vix_raw (
+            datetime TIMESTAMP PRIMARY KEY,
+            open NUMERIC,
+            high NUMERIC,
+            low NUMERIC,
+            close NUMERIC,
+            volume BIGINT,
+            vix NUMERIC
         );
     """)
-
-    # Table 2: Computed features (derived from ohlcv)
+    
+    # 2. Table for storing the merged 16-feature training matrix
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS features (
-            id                  SERIAL PRIMARY KEY,
-            ticker              VARCHAR(20) NOT NULL,
-            date                TIMESTAMP NOT NULL,
-            rsi                 DOUBLE PRECISION,
-            sma_crossover       DOUBLE PRECISION,
-            rolling_volatility  DOUBLE PRECISION,
-            volume_delta        DOUBLE PRECISION,
-            lagged_return_1     DOUBLE PRECISION,
-            lagged_return_3     DOUBLE PRECISION,
-            lagged_return_5     DOUBLE PRECISION,
-            UNIQUE(ticker, date)  -- one feature row per ticker per day
+        CREATE TABLE IF NOT EXISTS nifty_training_data (
+            datetime TIMESTAMP PRIMARY KEY,
+            close NUMERIC,
+            rsi NUMERIC,
+            macd_diff_pct NUMERIC,
+            bb_width NUMERIC,
+            atr_pct NUMERIC,
+            hl_spread NUMERIC,
+            volume_delta NUMERIC,
+            lagged_return_1 NUMERIC,
+            vix NUMERIC,
+            vix_return NUMERIC,
+            realized_vol_5 NUMERIC,
+            realized_vol_10 NUMERIC,
+            realized_vol_20 NUMERIC,
+            close_fracdiff NUMERIC,
+            sin_hour NUMERIC,
+            cos_hour NUMERIC,
+            sin_day NUMERIC,
+            cos_day NUMERIC
         );
     """)
-
+    
+    # 3. Table for storing live model forecasts
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS volatility_forecasts (
+            id SERIAL PRIMARY KEY,
+            datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ticker VARCHAR(20) DEFAULT '^NSEI',
+            current_price NUMERIC,
+            current_vix NUMERIC,
+            current_realized_vol NUMERIC,
+            forecasted_vol_5h NUMERIC,
+            expected_change_pct NUMERIC,
+            action VARCHAR(100)
+        );
+    """)
+    
+    # 4. Table for tracking model performance & drift history (Full Regression Metrics)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS model_drift_metrics (
+            id SERIAL PRIMARY KEY,
+            calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            evaluation_window_hours INT,
+            mean_absolute_error NUMERIC,
+            r2_score NUMERIC,
+            directional_accuracy NUMERIC,
+            accuracy_threshold NUMERIC,
+            drift_detected BOOLEAN
+        );
+    """)
+    
     conn.commit()
     cur.close()
     conn.close()
-    print("Tables created successfully.")
-
+    print("Database tables initialized successfully in Supabase.")
 
 if __name__ == "__main__":
-    create_tables()
+    initialize_database_schema()

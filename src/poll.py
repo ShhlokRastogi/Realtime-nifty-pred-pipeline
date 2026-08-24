@@ -1,241 +1,276 @@
-"""
-Live Polling Script — queries public Binance API for the latest candles,
-saves them to Postgres, and runs the feature store to update Redis.
-
-Run: python src/poll.py
-"""
-import time
-import requests
-import pandas as pd
-import psycopg2
-from config import TICKERS, DB_CONFIG
-from ingest import save_to_postgres
-from feature_store import run_feature_store
-
-
-def map_ticker_to_binance(ticker: str) -> str:
-    """Maps tickers like BTC-USD to Binance symbols like BTCUSDT."""
-    clean = ticker.replace("-USD", "USDT")
-    return clean
-
-
-import requests
-
-def fetch_latest_candles_coinbase(ticker: str, limit: int = 5) -> pd.DataFrame:
-    """
-    Fetches the latest 15-minute candles from the Coinbase public exchange API.
-    Bypasses US IP blocks and is not rate-limited on Render.
-    
-    Returns:
-        DataFrame formatted exactly like our downloads.
-    """
-    print(f"  Downloading latest 15m candles from Coinbase...")
-    
-    # Coinbase API uses the format BTC-USD directly
-    url = f"https://api.exchange.coinbase.com/products/{ticker}/candles"
-    params = {"granularity": 900} # 15 minutes = 900 seconds
-    headers = {"User-Agent": "Mozilla/5.0"} # Coinbase requires a User-Agent header
-    
-    response = requests.get(url, params=params, headers=headers)
-    response.raise_for_status()
-    data = response.json() # List of lists: [time, low, high, open, close, volume]
-    
-    rows = []
-    # Take the latest N candles (Coinbase returns them descending, so we limit first)
-    for item in data[:limit]:
-        rows.append({
-            "Date": pd.to_datetime(item[0], unit='s'),
-            "Low": float(item[1]),
-            "High": float(item[2]),
-            "Open": float(item[3]),
-            "Close": float(item[4]),
-            "Volume": float(item[5])
-        })
-        
-    df = pd.DataFrame(rows)
-    df = df.set_index("Date")
-    df = df.sort_index() # Sort ascending
-    return df
-
-
-import joblib
-import redis
 import os
-import json
-from config import REDIS_CONFIG
-from prometheus_client import Gauge, Counter, REGISTRY
+import time
+import pickle
+import psycopg2
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import yfinance as yf
+from sklearn.preprocessing import StandardScaler
+from config import SEQ_LEN, FFD_D, FFD_MAX_LAGS, DB_CONFIG
 
-# Register/load Prometheus gauges inside the shared process memory
-if 'crypto_mlops_drift_live_accuracy' in REGISTRY._names_to_collectors:
-    ACCURACY_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_drift_live_accuracy']
-else:
-    ACCURACY_GAUGE = Gauge("live_accuracy", "Rolling accuracy of the model", ["ticker"], namespace="crypto_mlops", subsystem="drift")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-if 'crypto_mlops_drift_drift_detected' in REGISTRY._names_to_collectors:
-    DRIFT_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_drift_drift_detected']
-else:
-    DRIFT_GAUGE = Gauge("drift_detected", "Performance drift detected (accuracy < 50%)", ["ticker"], namespace="crypto_mlops", subsystem="drift")
+FEATURE_COLS_VOL = [
+    "rsi", "macd_diff_pct", "bb_width", "atr_pct", "hl_spread", "volume_delta", 
+    "lagged_return_1", "vix", "vix_return", "realized_vol_5", "realized_vol_10", 
+    "realized_vol_20", "sin_hour", "cos_hour", "sin_day", "cos_day"
+]
 
-# Expose predicted vs true directions (1.0 = UP, 0.0 = DOWN)
-if 'crypto_mlops_prediction_predicted_direction' in REGISTRY._names_to_collectors:
-    PRED_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_predicted_direction']
-else:
-    PRED_DIR_GAUGE = Gauge("predicted_direction", "Latest predicted direction (1=UP, 0=DOWN)", ["ticker"], namespace="crypto_mlops", subsystem="prediction")
+class TemporalPriorAttention4h(nn.Module):
+    def __init__(self, hidden_dim: int, seq_len: int = 42, bias_len: int = 6, bias_weight: float = 2.0):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(hidden_dim, 1))
+        bias = torch.zeros(seq_len)
+        bias[-bias_len:] = bias_weight
+        self.bias = nn.Parameter(bias.unsqueeze(0), requires_grad=False)
 
-if 'crypto_mlops_prediction_true_direction' in REGISTRY._names_to_collectors:
-    TRUTH_DIR_GAUGE = REGISTRY._names_to_collectors['crypto_mlops_prediction_true_direction']
-else:
-    TRUTH_DIR_GAUGE = Gauge("true_direction", "Latest true direction (1=UP, 0=DOWN)", ["ticker"], namespace="crypto_mlops", subsystem="prediction")
+    def forward(self, gru_out):
+        raw_scores = torch.matmul(gru_out, self.weight)
+        scores = raw_scores.squeeze(-1) + self.bias
+        weights = torch.softmax(scores, dim=1)
+        context = torch.sum(gru_out * weights.unsqueeze(-1), dim=1)
+        return context, weights
 
-def evaluate_live_accuracy(ticker: str, current_time: pd.Timestamp, current_close: float):
-    """
-    Checks if a prediction was logged for the previous candle. 
-    If yes, evaluates if it was correct, logs to Redis history, and updates gauges.
-    """
-    r = redis.Redis(**REDIS_CONFIG)
+class AttentionGRURegressor(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 128, num_layers: int = 2, dropout: float = 0.2):
+        super().__init__()
+        self.gru = nn.GRU(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0
+        )
+        self.attention = TemporalPriorAttention4h(hidden_dim, seq_len=42, bias_len=6, bias_weight=2.0)
+        self.fc = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x):
+        out, hn = self.gru(x)
+        context, weights = self.attention(out)
+        prediction = self.fc(context)
+        return prediction.squeeze(-1)
+
+# Helper function to generate features on the fly
+def build_live_features(df_merged):
+    df = df_merged.copy()
+    close = df['close']
+    high = df['high']
+    low = df['low']
+    volume = df['volume']
     
-    # 1. We look back 15 minutes to find the previous candle timestamp
-    prev_time = current_time - pd.Timedelta(minutes=15)
-    prev_time_str = str(prev_time)
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    df['rsi'] = 100 - (100 / (1 + rs))
     
-    pred_key = f"pred:{ticker}:{prev_time_str}"
-    close_key = f"close:{ticker}:{prev_time_str}"
+    macd = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    signal = macd.ewm(span=9, adjust=False).mean()
+    df['macd_diff_pct'] = (macd - signal) / (close + 1e-9)
     
-    saved_pred = r.get(pred_key)
-    saved_close = r.get(close_key)
+    bb_mid = close.rolling(window=20).mean()
+    bb_std = close.rolling(window=20).std()
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+    df['bb_width'] = (bb_upper - bb_lower) / (bb_mid + 1e-9)
     
-    if saved_pred and saved_close:
-        prediction = saved_pred.decode()
-        prev_close = float(saved_close.decode())
-        
-        # Calculate true label
-        actual = "UP" if current_close > prev_close else "DOWN"
-        is_correct = 1 if prediction == actual else 0
-        
-        print(f"  [EVAL] {ticker}: Pred at {prev_time_str} was {prediction}, Actual was {actual} ({'CORRECT' if is_correct else 'INCORRECT'})")
-        
-        # Expose directional metrics (1.0 = UP, 0.0 = DOWN)
-        PRED_DIR_GAUGE.labels(ticker=ticker).set(1.0 if prediction == "UP" else 0.0)
-        TRUTH_DIR_GAUGE.labels(ticker=ticker).set(1.0 if actual == "UP" else 0.0)
-        
-        # Push outcome to Redis rolling window (max 100)
-        history_key = f"history:{ticker}"
-        r.lpush(history_key, is_correct)
-        r.ltrim(history_key, 0, 99) # Keep last 100 outcomes
-        
-        # Clean up Redis prediction keys
-        r.delete(pred_key)
-        r.delete(close_key)
-        
-    # 2. Retrieve history and calculate rolling accuracy
-    history_key = f"history:{ticker}"
-    outcomes = r.lrange(history_key, 0, -1)
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df['atr_pct'] = tr.rolling(window=14).mean() / (close + 1e-9)
+    df['hl_spread'] = (high - low) / (close + 1e-9)
+    df['volume_delta'] = volume.diff() / (volume.shift(1) + 1e-9)
+    df['lagged_return_1'] = close.pct_change(1)
     
-    if outcomes:
-        outcomes_list = [int(x.decode()) for x in outcomes]
-        rolling_acc = sum(outcomes_list) / len(outcomes_list)
-        ACCURACY_GAUGE.labels(ticker=ticker).set(rolling_acc)
-        print(f"  [ACCURACY] {ticker} Rolling Accuracy (last {len(outcomes_list)} runs): {rolling_acc:.4f}")
-        
-        # Performance Drift Trigger: If we have at least 10 outcomes and accuracy falls below 50%
-        if len(outcomes_list) >= 10 and rolling_acc < 0.50:
-            print(f"  [DRIFT] Alert! {ticker} accuracy has dropped below 50%. Setting drift_detected=1")
-            DRIFT_GAUGE.labels(ticker=ticker).set(1.0)
-        else:
-            DRIFT_GAUGE.labels(ticker=ticker).set(0.0)
-
-def generate_live_prediction(ticker: str, current_time: pd.Timestamp, current_close: float):
-    """
-    Generates a prediction using the active model for the next candle interval, 
-    and saves the state to Redis to be evaluated on the next run.
-    """
-    r = redis.Redis(**REDIS_CONFIG)
+    df['realized_vol_5'] = df['lagged_return_1'].rolling(5).std()
+    df['realized_vol_10'] = df['lagged_return_1'].rolling(10).std()
+    df['realized_vol_20'] = df['lagged_return_1'].rolling(20).std()
     
-    # Load model and cache
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_dir, "..", "models", "active_model.pkl")
-    if not os.path.exists(model_path):
-        model_path = os.path.join(base_dir, "..", "models", "xgb_model.pkl")
+    hours = df.index.hour
+    days = df.index.dayofweek
+    df['sin_hour'] = np.sin(2 * np.pi * hours / 24.0)
+    df['cos_hour'] = np.cos(2 * np.pi * hours / 24.0)
+    df['sin_day'] = np.sin(2 * np.pi * days / 7.0)
+    df['cos_day'] = np.cos(2 * np.pi * days / 7.0)
+    
+    return df.dropna()
+
+def get_weights_ffd(d, size):
+    w = [1.0]
+    for k in range(1, size):
+        w_k = -w[-1] / k * (d - k + 1)
+        w.append(w_k)
+    return np.array(w)
+
+def apply_fractional_differentiation(df, d=FFD_D, max_lags=FFD_MAX_LAGS):
+    series = df['close']
+    w = get_weights_ffd(d, max_lags)
+    w_rev = w[::-1]
+    res = []
+    for i in range(max_lags - 1, len(series)):
+        res.append(np.dot(series.iloc[i - max_lags + 1 : i + 1], w_rev))
+    df_res = df.iloc[max_lags - 1 :].copy()
+    df_res['close_fracdiff'] = res
+    return df_res
+
+# =====================================================================
+# DATABASE WRITE OPERATIONS
+# =====================================================================
+def upsert_raw_market_data(conn, df_merged):
+    """Upserts raw price and VIX candles into the database."""
+    cur = conn.cursor()
+    for timestamp, row in df_merged.iterrows():
+        # Handle volume conversion to standard python int/float
+        vol = int(row['volume']) if not pd.isna(row['volume']) else 0
+        cur.execute("""
+            INSERT INTO nifty_vix_raw (datetime, open, high, low, close, volume, vix)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (datetime) DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                vix = EXCLUDED.vix;
+        """, (timestamp, row['open'], row['high'], row['low'], row['close'], vol, row['vix']))
+    conn.commit()
+    cur.close()
+
+def upsert_training_data(conn, df_features):
+    """Upserts fully generated 16-feature records into the database."""
+    cur = conn.cursor()
+    for timestamp, row in df_features.iterrows():
+        cur.execute("""
+            INSERT INTO nifty_training_data 
+            (datetime, close, rsi, macd_diff_pct, bb_width, atr_pct, hl_spread, volume_delta, 
+             lagged_return_1, vix, vix_return, realized_vol_5, realized_vol_10, realized_vol_20, 
+             close_fracdiff, sin_hour, cos_hour, sin_day, cos_day)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (datetime) DO UPDATE SET
+                close = EXCLUDED.close,
+                rsi = EXCLUDED.rsi,
+                macd_diff_pct = EXCLUDED.macd_diff_pct,
+                bb_width = EXCLUDED.bb_width,
+                atr_pct = EXCLUDED.atr_pct,
+                hl_spread = EXCLUDED.hl_spread,
+                volume_delta = EXCLUDED.volume_delta,
+                lagged_return_1 = EXCLUDED.lagged_return_1,
+                vix = EXCLUDED.vix,
+                vix_return = EXCLUDED.vix_return,
+                realized_vol_5 = EXCLUDED.realized_vol_5,
+                realized_vol_10 = EXCLUDED.realized_vol_10,
+                realized_vol_20 = EXCLUDED.realized_vol_20,
+                close_fracdiff = EXCLUDED.close_fracdiff,
+                sin_hour = EXCLUDED.sin_hour,
+                cos_hour = EXCLUDED.cos_hour,
+                sin_day = EXCLUDED.sin_day,
+                cos_day = EXCLUDED.cos_day;
+        """, (
+            timestamp, row['close'], row['rsi'], row['macd_diff_pct'], row['bb_width'], 
+            row['atr_pct'], row['hl_spread'], row['volume_delta'], row['lagged_return_1'], 
+            row['vix'], row['vix_return'], row['realized_vol_5'], row['realized_vol_10'], 
+            row['realized_vol_20'], row['close_fracdiff'], row['sin_hour'], row['cos_hour'], 
+            row['sin_day'], row['cos_day']
+        ))
+    conn.commit()
+    cur.close()
+
+def log_forecast_to_db(conn, price, vix, realized_vol, forecasted_vol, change_pct, action):
+    """Inserts prediction row into database."""
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO volatility_forecasts 
+        (current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (price, vix, realized_vol, forecasted_vol, change_pct, action))
+    conn.commit()
+    cur.close()
+
+# =====================================================================
+# LIVE INFERENCE EXECUTION
+# =====================================================================
+def generate_live_inference():
+    model_path = "models/attention_regressor.pt"
+    scaler_path = "models/scaler_regressor.pkl"
+    
+    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+        raise FileNotFoundError("Model files missing. Train the model first.")
         
-    if os.path.exists(model_path):
-        try:
-            # Retrieve latest computed feature set from Redis cache
-            cache_raw = r.get(f"features:{ticker}")
-            if cache_raw:
-                payload = json.loads(cache_raw.decode())
-                features = payload["features"]
-                feature_cols = [
-                    "rsi", "sma_crossover", "rolling_volatility",
-                    "volume_delta", "lagged_return_1", "lagged_return_3", "lagged_return_5"
-                ]
-                
-                # Make prediction
-                df_feat = pd.DataFrame([features])[feature_cols]
-                model = joblib.load(model_path)
-                pred_val = model.predict(df_feat)[0]
-                prediction_string = "UP" if pred_val == 1 else "DOWN"
-                
-                # Log prediction and close price for this timestamp to be evaluated on the next run
-                current_time_str = str(current_time)
-                r.set(f"pred:{ticker}:{current_time_str}", prediction_string)
-                r.set(f"close:{ticker}:{current_time_str}", current_close)
-                print(f"  [PRED] Logged {ticker} prediction for next candle: {prediction_string}")
-        except Exception as e:
-            print(f"  Error generating poller prediction for {ticker}: {e}")
-
-def poll_once():
-    """Fetches new prices, saves to DB, updates features, evaluates accuracy, and caches to Redis."""
-    print("\n=== Polling cycle started ===")
-    for ticker in TICKERS:
-        try:
-            print(f"Fetching latest data for {ticker} from Coinbase...")
-            # Fetch latest 15-minute candles from Coinbase
-            df = fetch_latest_candles_coinbase(ticker, limit=5)
-            
-            # Upsert into Postgres ohlcv table
-            save_to_postgres(df, ticker)
-            print(f"  Successfully saved/updated {len(df)} rows in database.")
-            
-            # Retrieve the latest closed candle details
-            latest_row = df.iloc[-1]
-            latest_time = latest_row.name
-            latest_close = float(latest_row["Close"])
-            
-            # Step 1: Evaluate accuracy of the previous prediction
-            evaluate_live_accuracy(ticker, latest_time, latest_close)
-            
-        except Exception as e:
-            print(f"  Error fetching data for {ticker}: {e}")
-            
-    # Step 2: Trigger feature store to recompute and write features
-    try:
-        print("Triggering Feature Store run (incremental mode: limit=100)...")
-        run_feature_store(limit=100)
+    model = AttentionGRURegressor(input_dim=16, hidden_dim=256, num_layers=3, dropout=0.19345).to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    
+    with open(scaler_path, "rb") as f_in:
+        scaler = pickle.load(f_in)
         
-        # Step 3: Generate prediction for the next candle and save state in Redis
-        for ticker in TICKERS:
-            # Query maximum date from Postgres to match what the feature store just cached
-            conn = psycopg2.connect(**DB_CONFIG)
-            cur = conn.cursor()
-            cur.execute("SELECT date, close FROM ohlcv WHERE ticker = %s ORDER BY date DESC LIMIT 1", (ticker,))
-            latest = cur.fetchone()
-            cur.close()
-            conn.close()
-            if latest:
-                generate_live_prediction(ticker, latest[0], float(latest[1]))
-                
-    except Exception as e:
-        print(f"  Error during Feature Store run: {e}")
-    print("=== Polling cycle complete ===")
-
-
-def main():
-    print("Starting Live Polling Service (Interval: 60s)...")
-    import time
-    while True:
-        poll_once()
-        time.sleep(60)
-
+    print("Fetching live market data from Yahoo Finance...")
+    df_nifty = yf.download("^NSEI", period="15d", interval="1h")
+    df_vix = yf.download("^INDIAVIX", period="15d", interval="1h")
+    
+    if isinstance(df_nifty.columns, pd.MultiIndex):
+        df_nifty.columns = df_nifty.columns.get_level_values(0)
+    if isinstance(df_vix.columns, pd.MultiIndex):
+        df_vix.columns = df_vix.columns.get_level_values(0)
+        
+    df_nifty.index = df_nifty.index.tz_localize(None)
+    df_vix.index = df_vix.index.tz_localize(None)
+    
+    df_vix_close = df_vix[['Close']].rename(columns={'Close': 'vix'})
+    df_merged = df_nifty.join(df_vix_close, how='inner')
+    df_merged['vix'] = df_merged['vix'].ffill().bfill()
+    df_merged['vix_return'] = df_merged['vix'].pct_change(1).fillna(0.0)
+    df_merged = df_merged.rename(columns={
+        'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+    })
+    
+    # 1. Update Raw Market Table in Supabase
+    conn = psycopg2.connect(**DB_CONFIG)
+    print("Updating raw database table...")
+    upsert_raw_market_data(conn, df_merged)
+    
+    # 2. Build Technical Features
+    df_features = build_live_features(df_merged)
+    df_features = apply_fractional_differentiation(df_features)
+    
+    # 3. Update Training Table in Supabase (with freshly generated features)
+    print("Updating training features database table...")
+    upsert_training_data(conn, df_features)
+    
+    latest_X = df_features[FEATURE_COLS_VOL].values[-SEQ_LEN:]
+    current_price = df_features['close'].values[-1]
+    current_realized_vol = df_features['realized_vol_5'].values[-1] * 100.0
+    current_vix = df_features['vix'].values[-1]
+    
+    # Scale inputs
+    latest_X_scaled = scaler.transform(latest_X.reshape(-1, 16)).reshape(1, SEQ_LEN, 16)
+    
+    with torch.no_grad():
+        latest_X_tensor = torch.FloatTensor(latest_X_scaled).to(device)
+        forecasted_vol = model(latest_X_tensor).cpu().numpy()[0]
+        
+    expected_change = ((forecasted_vol - current_realized_vol)/current_realized_vol)*100
+    
+    if forecasted_vol > (current_realized_vol * 1.50):
+        action = "⚠️ CAUTION: Entering High Volatility. Reduce trade sizes / Buy puts."
+    else:
+        action = "✅ NORMAL: Market remains calm. Range-bound trading / standard sizing active."
+        
+    # 4. Log the forecast to Supabase
+    log_forecast_to_db(conn, current_price, current_vix, current_realized_vol, forecasted_vol, expected_change, action)
+    conn.close()
+    
+    print("\n" + "#"*70)
+    print(f"  LIVE PRODUCTION SIGNAL FOR INDEX: ^NSEI (Nifty 50)")
+    print(f"  Current Nifty 50 Price  : ₹{current_price:,.2f}")
+    print(f"  Current India VIX Level : {current_vix:.2f}")
+    print(f"  Current Realized Vol    : {current_realized_vol:.4f}%")
+    print(f"  GRU Forecasted Vol (5h) : {forecasted_vol:.4f}%")
+    print(f"  Expected Volatility Change: {expected_change:+.2f}%")
+    print(f"  Action                  : {action}")
+    print("#"*70)
 
 if __name__ == "__main__":
-    main()
+    generate_live_inference()
