@@ -43,7 +43,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(drift_detected[15m])",
+          "expr": "drift_detected",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -117,7 +117,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(directional_accuracy[15m])",
+          "expr": "directional_accuracy",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -186,7 +186,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(r2_score[15m])",
+          "expr": "r2_score",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -255,7 +255,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(india_vix[15m])",
+          "expr": "india_vix",
           "instant": true,
           "range": false,
           "refId": "A"
