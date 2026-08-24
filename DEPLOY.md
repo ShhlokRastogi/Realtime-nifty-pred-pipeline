@@ -22,7 +22,7 @@ This document details the step-by-step instructions to deploy your Git-Ops predi
 
 ### 1. Supabase (Free PostgreSQL)
 1. Go to [Supabase.com](https://supabase.com) and create a free account.
-2. Create a new project (e.g. `crypto-db`). Set a database password and save it securely.
+2. Create a new project (e.g. `nifty-volatility-db`). Set a database password and save it securely.
 3. Once the database is ready, go to **Project Settings** -> **Database**.
 4. Scroll down to **Connection String**, select **URI**, and copy the string. It will look like:
    `postgresql://postgres:[YOUR-PASSWORD]@db.xxxx.supabase.co:5432/postgres`
@@ -39,7 +39,7 @@ This document details the step-by-step instructions to deploy your Git-Ops predi
 To deploy, we must update our local config to read from cloud environment variables. 
 
 ### 1. Update [`src/config.py`](file:///C:/D/crypto/src/config.py)
-Modify the database and Redis configs to read from environment variables:
+Our database and Redis configs are configured to read from environment variables:
 ```python
 import os
 
@@ -49,7 +49,7 @@ DB_CONFIG = {
     "port": os.getenv("DB_PORT", "5432"),
     "user": os.getenv("DB_USER", "myuser"),
     "password": os.getenv("DB_PASSWORD", "mypassword"),
-    "database": os.getenv("DB_NAME", "crypto_features"),
+    "dbname": os.getenv("DB_NAME", "crypto_features"),
 }
 
 # Redis Configuration
@@ -57,19 +57,17 @@ REDIS_CONFIG = {
     "host": os.getenv("REDIS_HOST", "localhost"),
     "port": int(os.getenv("REDIS_PORT", "6379")),
     "password": os.getenv("REDIS_PASSWORD", None),
+    "db": 0,
 }
 ```
 
-### 2. Create the Startup Script (`start.sh`)
-Since Render only allows one free web service, we will bundle the poller (`poll.py`) and FastAPI (`api.py`) inside the same container. 
+### 2. Startup Script (`start.sh`)
+Since Render only allows one free web service, we run FastAPI (`api.py`) which starts the background poller thread `poller_loop` natively inside FastAPI's startup event, checking and downloading live index prices hourly. 
 
-Create a file named `start.sh` in your project root:
+Your `start.sh` file runs uvicorn:
 ```bash
 #!/bin/bash
-# 1. Start the poller loop in the background
-python src/poll.py &
-
-# 2. Start the FastAPI API server in the foreground
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src
 uvicorn src.api:app --host 0.0.0.0 --port $PORT
 ```
 
@@ -79,7 +77,7 @@ uvicorn src.api:app --host 0.0.0.0 --port $PORT
 
 1. Go to [Render.com](https://render.com) and sign up.
 2. Click **New** -> **Web Service**.
-3. Link your GitHub repository `self-healing-crypto-pipeline`.
+3. Link your GitHub repository `realtime-crypto-ml-pipeline`.
 4. Set the configurations:
    * **Runtime:** `Python`
    * **Build Command:** `pip install -r requirements.txt`
@@ -126,7 +124,8 @@ Render's free tier goes to sleep after 15 minutes of inactivity. To prevent this
 2. Click **Add New Monitor**.
 3. Set:
    * **Monitor Type:** `HTTP(s)`
-   * **Friendly Name:** `Crypto API`
+   * **Friendly Name:** `Nifty Volatility API`
    * **URL:** `https://[YOUR-RENDER-SUBDOMAIN].onrender.com/health`
    * **Monitoring Interval:** `Every 5 minutes`
-4. Save the monitor. UptimeRobot will ping your endpoint every 5 minutes, keeping the server (and your poller) awake 24/7!
+4. Save the monitor. UptimeRobot will ping your endpoint every 5 minutes, keeping the server awake 24/7!
+

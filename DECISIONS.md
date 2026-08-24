@@ -5,37 +5,31 @@ A log of every non-obvious design choice in this project.
 ---
 
 ### 001 — Plain scripts vs installable package
-- **Choice:** Flat Python scripts in `src/`, no `setup.py` or `pyproject.toml`.
-- **Alternative:** Proper Python package with `pyproject.toml` and `pip install -e .`
-- **Reason:** We don't need installability yet; flat scripts are easier to navigate and debug while learning. We'll add packaging when we build the FastAPI serving layer.
+*   **Choice:** Flat Python scripts in `src/`, no package structure.
+*   **Reason:** Simplifies development, Docker file copying, and GitOps tracking.
 
-### 002 — yfinance vs Binance API for historical data
-- **Choice:** yfinance for Week 1 (daily candles).
-- **Alternative:** Binance public REST API (supports 1m/1h candles, more reliable).
-- **Reason:** yfinance is a one-liner with no auth; sufficient for daily data. Binance adds pagination and rate-limit handling that isn't needed until we go to finer granularity in Week 2.
+### 002 — yfinance for data ingestion
+*   **Choice:** Ingest hourly candles from Yahoo Finance (`yfinance`).
+*   **Reason:** Provides reliable, clean, free data feeds for `^NSEI` (Nifty 50) and `^INDIAVIX` with zero API authentication requirements, minimizing production API dependencies.
 
-### 003 — Binary (up/down) vs 3-class (up/down/flat) for baseline
-- **Choice:** Binary classification (sign of next-day return) for Week 1.
-- **Alternative:** 3-class with a flat threshold, or the two-stage cascaded classifier (flat-detector → direction-classifier).
-- **Reason:** Binary gives cleaner class balance and a simpler first model. The two-stage design is planned for Week 2–3 once we have return distributions to pick a good flat threshold.
+### 003 — Realized Volatility Regression vs Binary Classification
+*   **Choice:** Model future 5-hour realized volatility as a continuous regression variable.
+*   **Reason:** Volatility is highly clusters-based and mean-reverting, making it statistically easier to model and highly applicable for options straddle trading (pricing premiums).
 
-### 004 — SMA vs EMA for crossover feature
-- **Choice:** SMA(10) vs SMA(50) crossover.
-- **Alternative:** EMA, which weights recent prices more heavily.
-- **Reason:** At daily granularity the difference is marginal; SMA is easier to inspect and debug when sanity-checking features.
+### 004 — Target Scaling
+*   **Choice:** Multiply raw realized volatility targets by 100.
+*   **Reason:** Standard volatility decimals (e.g. `0.0008`) result in vanishing PyTorch gradients (MSE Loss is too close to zero to trigger weight updates). Scaling shifts the decimals to integers, ensuring smooth gradient descent.
 
-### 005 — XGBoost vs logistic regression for baseline
-- **Choice:** XGBoost as the primary model, with a dummy (majority-class) classifier as the floor.
-- **Alternative:** Logistic regression as an intermediate baseline.
-- **Reason:** XGBoost is in the project spec and is still lightweight enough for fast iteration. The dummy classifier gives us the "does this model beat random?" check that logistic regression would have served.
+### 005 — PyTorch Attention-GRU vs Classical ML (XGBoost)
+*   **Choice:** Use a 2-layer Recurrent Neural Network (GRU) coupled with a Temporal Prior Attention Head.
+*   **Reason:** Time-series volatility has long-term memory signatures that recurrent cells capture far better than tree-based models like XGBoost. The temporal attention head helps the network focus on specific market sessions (like market opens).
 
 ### 006 — Postgres + Redis Dual Database Architecture
-- **Choice:** Postgres for permanent historical tables (offline store) + Redis for latest values (online cache).
-- **Alternative:** Postgres only.
-- **Reason:** Postgres handles robust SQL querying and multi-process updates without file corruption. Redis ensures prediction endpoint latency stays under <1ms.
+*   **Choice:** Postgres (Supabase) for permanent training databases and drift logs; Redis (Upstash) for API cache.
+*   **Reason:** Supabase manages relational performance logs, while Upstash Redis ensures sub-20ms response times for the prediction endpoint under high query volumes.
 
-### 007 — Binance API for Live Polling
-- **Choice:** Fetching live data via Binance API in `poll.py`.
-- **Alternative:** yfinance.
-- **Reason:** Binance's public REST endpoints provide real-time updates and spot prices instantly, whereas yfinance is slow and unsuitable for live-updating pipelines.
+### 007 — Fractional Differentiation ($d=0.40$)
+*   **Choice:** Apply fractional differentiation with order $d=0.40$ on Nifty prices.
+*   **Reason:** Standard integer differentiation ($d=1$) removes all price history (memory). Fractional differentiation removes the non-stationary trend while keeping maximum historical price correlation, providing a cleaner feed to the neural network.
+
 
