@@ -25,12 +25,12 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 5,
+        "w": 6,
         "x": 0,
         "y": 0
       },
       "id": 1,
-      "title": "BTC-USD Drift Status",
+      "title": "Model Drift Status",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -43,7 +43,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(crypto_mlops_drift_drift_detected{ticker=\"BTC-USD\"}[15m])",
+          "expr": "last_over_time(drift_detected[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -62,7 +62,7 @@
                 "1": {
                   "color": "red",
                   "index": 1,
-                  "text": "DRIFTED"
+                  "text": "DRIFT WARNING"
                 }
               },
               "type": "value"
@@ -99,81 +99,12 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 5,
-        "y": 0
-      },
-      "id": 8,
-      "title": "BTC-USD Live Accuracy",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "default"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "default"
-          },
-          "editorMode": "code",
-          "expr": "last_over_time(crypto_mlops_drift_live_accuracy{ticker=\"BTC-USD\"}[15m])",
-          "instant": true,
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.50
-              },
-              {
-                "color": "green",
-                "value": 0.55
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      }
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 10,
+        "w": 6,
+        "x": 6,
         "y": 0
       },
       "id": 2,
-      "title": "ETH-USD Drift Status",
+      "title": "Directional Accuracy",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -186,7 +117,7 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "last_over_time(crypto_mlops_drift_drift_detected{ticker=\"ETH-USD\"}[15m])",
+          "expr": "last_over_time(directional_accuracy[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -194,81 +125,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "HEALTHY"
-                },
-                "1": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "DRIFTED"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      }
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 15,
-        "y": 0
-      },
-      "id": 9,
-      "title": "ETH-USD Live Accuracy",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "default"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "default"
-          },
-          "editorMode": "code",
-          "expr": "last_over_time(crypto_mlops_drift_live_accuracy{ticker=\"ETH-USD\"}[15m])",
-          "instant": true,
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
+          "unit": "percent",
           "color": {
             "mode": "thresholds"
           },
@@ -281,11 +138,11 @@
               },
               {
                 "color": "yellow",
-                "value": 0.50
+                "value": 60.0
               },
               {
                 "color": "green",
-                "value": 0.55
+                "value": 70.0
               }
             ]
           }
@@ -311,12 +168,12 @@
       "collapsed": false,
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 6,
+        "x": 12,
         "y": 0
       },
       "id": 3,
-      "title": "Total Predictions Served",
+      "title": "R2 Score",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -329,7 +186,76 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "sum(crypto_mlops_prediction_predictions_total)",
+          "expr": "last_over_time(r2_score[15m])",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.0
+              },
+              {
+                "color": "green",
+                "value": 15.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "title": "India VIX",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "default"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "default"
+          },
+          "editorMode": "code",
+          "expr": "last_over_time(india_vix[15m])",
           "instant": true,
           "range": false,
           "refId": "A"
@@ -340,12 +266,12 @@
           "color": {
             "mode": "fixed"
           },
-          "fixedColor": "blue",
+          "fixedColor": "orange",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "orange",
                 "value": null
               }
             ]
@@ -376,8 +302,8 @@
         "x": 0,
         "y": 4
       },
-      "id": 4,
-      "title": "BTC-USD Accuracy Trend",
+      "id": 5,
+      "title": "Forecasted vs Realized Volatility",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -390,35 +316,31 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "crypto_mlops_drift_live_accuracy{ticker=\"BTC-USD\"}",
-          "legendFormat": "Rolling Accuracy",
+          "expr": "forecasted_volatility",
+          "legendFormat": "Forecasted Volatility (5h ahead)",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "default"
+          },
+          "editorMode": "code",
+          "expr": "realized_volatility",
+          "legendFormat": "Realized Volatility",
+          "range": true,
+          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
+          "unit": "percent",
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
-            "fillOpacity": 15,
-            "lineWidth": 3
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 0.50
-              }
-            ]
+            "fillOpacity": 10,
+            "lineWidth": 2
           }
         },
         "overrides": []
@@ -442,8 +364,8 @@
         "x": 12,
         "y": 4
       },
-      "id": 5,
-      "title": "ETH-USD Accuracy Trend",
+      "id": 6,
+      "title": "Nifty 50 Index Price",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -456,35 +378,18 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "crypto_mlops_drift_live_accuracy{ticker=\"ETH-USD\"}",
-          "legendFormat": "Rolling Accuracy",
+          "expr": "nifty_price",
+          "legendFormat": "Nifty 50 Close",
           "range": true,
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
-            "fillOpacity": 15,
-            "lineWidth": 3
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 0.50
-              }
-            ]
+            "lineWidth": 2
           }
         },
         "overrides": []
@@ -504,118 +409,12 @@
       "collapsed": false,
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 12
       },
-      "id": 6,
-      "title": "BTC-USD Prediction vs True Label",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "default"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "default"
-          },
-          "editorMode": "code",
-          "expr": "crypto_mlops_prediction_predicted_direction{ticker=\"BTC-USD\"}",
-          "legendFormat": "Predicted (1=UP, 0=DOWN)",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "default"
-          },
-          "editorMode": "code",
-          "expr": "crypto_mlops_prediction_true_direction{ticker=\"BTC-USD\"}",
-          "legendFormat": "Actual (1=UP, 0=DOWN)",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 1
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Predicted (1=UP, 0=DOWN)"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "points"
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 10
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Actual (1=UP, 0=DOWN)"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "line"
-              },
-              {
-                "id": "custom.lineInterpolation",
-                "value": "stepAfter"
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "yellow"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      }
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
       "id": 7,
-      "title": "ETH-USD Prediction vs True Label",
+      "title": "Model MAE Loss Trend",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -628,84 +427,29 @@
             "uid": "default"
           },
           "editorMode": "code",
-          "expr": "crypto_mlops_prediction_predicted_direction{ticker=\"ETH-USD\"}",
-          "legendFormat": "Predicted (1=UP, 0=DOWN)",
+          "expr": "mae_loss",
+          "legendFormat": "Mean Absolute Error",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "default"
-          },
-          "editorMode": "code",
-          "expr": "crypto_mlops_prediction_true_direction{ticker=\"ETH-USD\"}",
-          "legendFormat": "Actual (1=UP, 0=DOWN)",
-          "range": true,
-          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "min": 0,
-          "max": 1
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Predicted (1=UP, 0=DOWN)"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "points"
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 10
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Actual (1=UP, 0=DOWN)"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "line"
-              },
-              {
-                "id": "custom.lineInterpolation",
-                "value": "stepAfter"
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "yellow"
-                }
-              }
-            ]
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 15,
+            "lineWidth": 2
           }
-        ]
+        },
+        "overrides": []
       },
       "options": {
         "legend": {
-          "calcs": [],
+          "calcs": [
+            "last"
+          ],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -725,6 +469,6 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Crypto Pipeline Monitor",
+  "title": "Nifty Volatility Pipeline Monitor",
   "version": 1
 }
