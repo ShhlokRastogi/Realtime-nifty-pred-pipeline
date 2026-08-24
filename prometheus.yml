@@ -9,8 +9,7 @@ remote_write:
       password: glc_eyJvIjoiMTg3OTQ5MiIsIm4iOiJzdGFjay0xNzg4NDg0LWFsbG95LWxvY2FsLXNjcmFwcGVyIiwiayI6ImU3UE85YjZuNjEydnZYZ0hXNVg2NWo1UiIsIm0iOnsiciI6InByb2QtYXAtc291dGgtMSJ9fQ==
 
 scrape_configs:
-  - job_name: 'crypto-pipeline-cloud'
+  - job_name: 'nifty-volatility-pipeline'
     metrics_path: '/metrics'
-    scheme: 'https'
     static_configs:
-      - targets: ["crypto-pipeline-api.onrender.com:443"]
+      - targets: ["app:8000"]
