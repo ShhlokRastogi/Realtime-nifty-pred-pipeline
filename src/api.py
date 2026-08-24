@@ -25,6 +25,12 @@ r = redis.Redis(**REDIS_CONFIG)
 def poller_loop():
     print("=== Background Poller & Drift Monitor Thread Initialized ===")
     while True:
+        # Update Prometheus Gauges from Supabase first so the dashboard displays real history immediately
+        try:
+            update_prometheus_metrics()
+        except Exception as e:
+            print(f"Error updating Prometheus metrics on startup: {e}")
+
         try:
             print("Executing hourly live data ingestion, feature generation, and prediction...")
             generate_live_inference()
@@ -32,7 +38,7 @@ def poller_loop():
             print("Executing hourly performance metrics and drift monitoring check...")
             monitor_accuracy_drift(window_hours=100)
             
-            # Update Prometheus Gauges with the latest records
+            # Update again after a successful run
             update_prometheus_metrics()
             
         except Exception as e:
