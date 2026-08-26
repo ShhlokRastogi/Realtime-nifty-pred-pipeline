@@ -96,17 +96,6 @@ def startup_event():
         print("=== Testing Environment Detected: Skipping Background Poller ===")
         return
 
-    # Set safe default baselines on Prometheus startup
-    NIFTY_PRICE.set(24250.0)
-    INDIA_VIX.set(11.20)
-    REALIZED_VOLATILITY.set(0.08)
-    FORECASTED_VOLATILITY.set(0.08)
-    EXPECTED_VOL_CHANGE.set(0.0)
-    DIRECTIONAL_ACCURACY.set(75.81)
-    MAE_LOSS.set(0.12)
-    R2_SCORE.set(26.47)
-    DRIFT_GAUGE.set(0.0)
-    
     # Run the background daemon poller
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()
