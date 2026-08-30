@@ -236,8 +236,8 @@ def generate_live_inference():
         scaler = pickle.load(f_in)
         
     print("Fetching live market data from Yahoo Finance...")
-    df_nifty = yf.download("^NSEI", period="15d", interval="1h")
-    df_vix = yf.download("^INDIAVIX", period="15d", interval="1h")
+    df_nifty = yf.download("^NSEI", period="30d", interval="1h")
+    df_vix = yf.download("^INDIAVIX", period="30d", interval="1h")
     
     if isinstance(df_nifty.columns, pd.MultiIndex):
         df_nifty.columns = df_nifty.columns.get_level_values(0)
