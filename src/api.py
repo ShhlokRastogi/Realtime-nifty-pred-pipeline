@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import redis
 import psycopg2
@@ -12,6 +13,30 @@ from config import REDIS_CONFIG, DB_CONFIG, TICKERS
 from prometheus_client import REGISTRY, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from poll import generate_live_inference
 from drift import monitor_accuracy_drift
+
+# Redirect stdout and stderr to a log file so we can view background thread tracebacks via /logs
+class Tee:
+    def __init__(self, file_path):
+        self.file = open(file_path, "a", encoding="utf-8")
+        self.stdout = sys.stdout
+        self.stderr = sys.stderr
+        sys.stdout = self
+        sys.stderr = self
+        
+    def write(self, data):
+        self.file.write(data)
+        self.file.flush()
+        self.stdout.write(data)
+        
+    def flush(self):
+        self.file.flush()
+        self.stdout.flush()
+
+if os.getenv("TESTING") != "true":
+    try:
+        Tee("poller.log")
+    except Exception as log_err:
+        print(f"Failed to initialize log file redirection: {log_err}")
 
 # App initialization
 app = FastAPI(title="Nifty 50 Volatility Forecast API")
@@ -199,6 +224,18 @@ def predict_nifty():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/logs")
+def get_logs():
+    """Exposes the last 200 lines of standard output/error logs for MLOps diagnostics."""
+    if not os.path.exists("poller.log"):
+        return Response("No logs recorded yet.", media_type="text/plain")
+    try:
+        with open("poller.log", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return Response("".join(lines[-200:]), media_type="text/plain")
+    except Exception as e:
+        return Response(f"Failed to read logs: {e}", media_type="text/plain")
 
 @app.get("/metrics")
 def metrics():
