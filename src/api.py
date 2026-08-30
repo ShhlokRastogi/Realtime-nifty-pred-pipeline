@@ -179,6 +179,8 @@ def fetch_latest_nifty_forecast():
             
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
