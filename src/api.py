@@ -134,11 +134,14 @@ def fetch_latest_nifty_forecast():
             "date": "2026-08-24 00:00:00"
         }
 
-    # Check cache first
-    cached_data = r.get("nifty_forecast")
-    if cached_data:
-        print("Returning cached volatility forecast from Upstash Redis...")
-        return json.loads(cached_data)
+    # Check cache first (safely fallback to DB if Redis is offline)
+    try:
+        cached_data = r.get("nifty_forecast")
+        if cached_data:
+            print("Returning cached volatility forecast from Upstash Redis...")
+            return json.loads(cached_data)
+    except Exception as cache_err:
+        print(f"Redis Cache connection failed (falling back to database): {cache_err}")
         
     # Query Supabase for the latest forecast
     try:
@@ -168,8 +171,12 @@ def fetch_latest_nifty_forecast():
             "date": row[6].strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Cache in Redis with 1-hour expiration time (TTL)
-        r.setex("nifty_forecast", 3600, json.dumps(result))
+        # Cache in Redis safely (don't crash if Redis write fails)
+        try:
+            r.setex("nifty_forecast", 3600, json.dumps(result))
+        except Exception as cache_err:
+            print(f"Failed to save forecast to Redis cache: {cache_err}")
+            
         return result
         
     except Exception as e:
