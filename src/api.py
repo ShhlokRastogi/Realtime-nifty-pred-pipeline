@@ -96,6 +96,13 @@ def startup_event():
         print("=== Testing Environment Detected: Skipping Background Poller ===")
         return
 
+    # Automatically create missing tables in Supabase
+    try:
+        from db_schema import initialize_database_schema
+        initialize_database_schema()
+    except Exception as e:
+        print(f"Error initializing database schema on startup: {e}")
+
     # Run the background daemon poller
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()
