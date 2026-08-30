@@ -135,7 +135,15 @@ def upsert_raw_market_data(conn, df_merged):
                 close = EXCLUDED.close,
                 volume = EXCLUDED.volume,
                 vix = EXCLUDED.vix;
-        """, (timestamp, row['open'], row['high'], row['low'], row['close'], vol, row['vix']))
+        """, (
+            timestamp, 
+            float(row['open']), 
+            float(row['high']), 
+            float(row['low']), 
+            float(row['close']), 
+            vol, 
+            float(row['vix'])
+        ))
     conn.commit()
     cur.close()
 
@@ -169,11 +177,25 @@ def upsert_training_data(conn, df_features):
                 sin_day = EXCLUDED.sin_day,
                 cos_day = EXCLUDED.cos_day;
         """, (
-            timestamp, row['close'], row['rsi'], row['macd_diff_pct'], row['bb_width'], 
-            row['atr_pct'], row['hl_spread'], row['volume_delta'], row['lagged_return_1'], 
-            row['vix'], row['vix_return'], row['realized_vol_5'], row['realized_vol_10'], 
-            row['realized_vol_20'], row['close_fracdiff'], row['sin_hour'], row['cos_hour'], 
-            row['sin_day'], row['cos_day']
+            timestamp, 
+            float(row['close']), 
+            float(row['rsi']), 
+            float(row['macd_diff_pct']), 
+            float(row['bb_width']), 
+            float(row['atr_pct']), 
+            float(row['hl_spread']), 
+            float(row['volume_delta']), 
+            float(row['lagged_return_1']), 
+            float(row['vix']), 
+            float(row['vix_return']), 
+            float(row['realized_vol_5']), 
+            float(row['realized_vol_10']), 
+            float(row['realized_vol_20']), 
+            float(row['close_fracdiff']), 
+            float(row['sin_hour']), 
+            float(row['cos_hour']), 
+            float(row['sin_day']), 
+            float(row['cos_day'])
         ))
     conn.commit()
     cur.close()
@@ -185,7 +207,14 @@ def log_forecast_to_db(conn, price, vix, realized_vol, forecasted_vol, change_pc
         INSERT INTO volatility_forecasts 
         (current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action)
         VALUES (%s, %s, %s, %s, %s, %s)
-    """, (price, vix, realized_vol, forecasted_vol, change_pct, action))
+    """, (
+        float(price), 
+        float(vix), 
+        float(realized_vol), 
+        float(forecasted_vol), 
+        float(change_pct), 
+        action
+    ))
     conn.commit()
     cur.close()
 

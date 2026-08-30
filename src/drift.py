@@ -68,7 +68,14 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
             INSERT INTO model_drift_metrics 
             (evaluation_window_hours, mean_absolute_error, r2_score, directional_accuracy, accuracy_threshold, drift_detected)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (window_hours, mae, r2, current_accuracy, critical_accuracy_threshold, drift_detected))
+        """, (
+            int(window_hours), 
+            float(mae), 
+            float(r2), 
+            float(current_accuracy), 
+            float(critical_accuracy_threshold), 
+            bool(drift_detected)
+        ))
         conn.commit()
         cur.close()
         conn.close()
