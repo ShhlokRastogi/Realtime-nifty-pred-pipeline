@@ -24,13 +24,12 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
                 f.source_datetime,
                 f.current_realized_vol, 
                 f.forecasted_vol_5h, 
-                (
-                    SELECT AVG(t.realized_vol_5)
-                    FROM nifty_training_data t
-                    WHERE t.datetime > f.source_datetime AND t.datetime <= f.target_datetime
-                ) AS actual_future_vol
+                AVG(t.realized_vol_5) AS actual_future_vol
             FROM volatility_forecasts f
-            WHERE f.target_datetime <= (SELECT MAX(datetime) FROM nifty_training_data)
+            INNER JOIN nifty_training_data t 
+                ON t.datetime > f.source_datetime AND t.datetime <= f.target_datetime
+            GROUP BY f.id, f.source_datetime, f.current_realized_vol, f.forecasted_vol_5h
+            HAVING COUNT(t.datetime) = 5
             ORDER BY f.source_datetime DESC 
             LIMIT %s
         """, (window_hours,))

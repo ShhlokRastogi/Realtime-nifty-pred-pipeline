@@ -117,6 +117,10 @@ def train_champion_regressor(X_tr, y_tr, epochs=30, batch_size=32, verbose=False
             
     return model, scaler_local, epoch_losses, lrs
 
+def get_directional_baseline(realized_vol_5_raw, split_idx, length, seq_len=42):
+    """Extracts the directional accuracy baseline from the final observation of each sequence."""
+    return realized_vol_5_raw[split_idx + seq_len - 1 : split_idx + seq_len - 1 + length] * 100.0
+
 def run_regression_pipeline():
     processed_path = os.path.join(PROCESSED_DATA_DIR, "processed_features.csv")
     df = pd.read_csv(processed_path, index_col='Datetime', parse_dates=True)
@@ -175,12 +179,7 @@ def run_regression_pipeline():
     mae = mean_absolute_error(wf_actuals, wf_preds)
     r2 = r2_score(wf_actuals, wf_preds)
     
-    current_vol_baseline = (
-        realized_vol_5_raw[
-            split_idx + SEQ_LEN - 1:
-            split_idx + SEQ_LEN - 1 + len(wf_preds)
-        ] * 100.0
-    )
+    current_vol_baseline = get_directional_baseline(realized_vol_5_raw, split_idx, len(wf_preds), SEQ_LEN)
     pred_change = np.where(wf_preds > current_vol_baseline, 1, 0)
     actual_change = np.where(wf_actuals > current_vol_baseline, 1, 0)
     dir_accuracy = accuracy_score(actual_change, pred_change) * 100

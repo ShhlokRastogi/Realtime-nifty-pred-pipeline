@@ -57,7 +57,9 @@ def initialize_database_schema():
             expected_change_pct NUMERIC,
             action VARCHAR(100),
             source_datetime TIMESTAMP,
-            target_datetime TIMESTAMP
+            target_datetime TIMESTAMP,
+            model_version VARCHAR(50) DEFAULT 'attention_gru_v1',
+            CONSTRAINT uq_forecasts UNIQUE (ticker, source_datetime, model_version)
         );
     """)
     
@@ -65,7 +67,27 @@ def initialize_database_schema():
     cur.execute("""
         ALTER TABLE volatility_forecasts 
         ADD COLUMN IF NOT EXISTS source_datetime TIMESTAMP,
-        ADD COLUMN IF NOT EXISTS target_datetime TIMESTAMP;
+        ADD COLUMN IF NOT EXISTS target_datetime TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS model_version VARCHAR(50) DEFAULT 'attention_gru_v1';
+    """)
+    
+    # Add unique constraint uq_forecasts if it does not exist
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_forecasts') THEN
+                ALTER TABLE volatility_forecasts ADD CONSTRAINT uq_forecasts UNIQUE (ticker, source_datetime, model_version);
+            END IF;
+        END;
+        $$;
+    """)
+    
+    # 3b. Table for Postgres-backed distributed lock (Concurrency safety)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS lock_store (
+            lock_key VARCHAR(50) PRIMARY KEY,
+            locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     
     # 4. Table for tracking model performance & drift history (Full Regression Metrics)

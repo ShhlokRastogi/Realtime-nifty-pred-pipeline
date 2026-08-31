@@ -19,8 +19,13 @@ def ingest_historical_data():
     if isinstance(df_vix.columns, pd.MultiIndex):
         df_vix.columns = df_vix.columns.get_level_values(0)
         
-    # Localize time to remove timezone offsets
+    # Convert timezone to Asia/Kolkata first, then make timezone-naive
+    if df_nifty.index.tz is not None:
+        df_nifty.index = df_nifty.index.tz_convert("Asia/Kolkata")
     df_nifty.index = df_nifty.index.tz_localize(None)
+    
+    if df_vix.index.tz is not None:
+        df_vix.index = df_vix.index.tz_convert("Asia/Kolkata")
     df_vix.index = df_vix.index.tz_localize(None)
     
     # Save raw CSVs

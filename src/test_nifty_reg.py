@@ -9,6 +9,7 @@ from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 from config import PROCESSED_DATA_DIR, VOL_FORECAST_WINDOW, SEQ_LEN, LOOKBACK_SIZE
 import random
+from train_reg import get_directional_baseline
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -112,12 +113,7 @@ def run_volatility_backtest():
         X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
         preds = model(X_test_tensor).cpu().numpy()
         
-    current_vol_baseline = (
-        realized_vol_5_raw[
-            split_idx + SEQ_LEN - 1:
-            split_idx + SEQ_LEN - 1 + len(preds)
-        ] * 100.0
-    )
+    current_vol_baseline = get_directional_baseline(realized_vol_5_raw, split_idx, len(preds), SEQ_LEN)
     
     # =====================================================================
     # SIMULATE OPTIONS VOLATILITY STRATEGY (Fixed 2% Risk Allocation)

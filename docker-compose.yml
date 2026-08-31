@@ -4,9 +4,9 @@ services:
         image: postgres:13
         container_name: my_postgres
         environment:
-            POSTGRES_USER: ${DB_USER:-myuser}
-            POSTGRES_PASSWORD: ${DB_PASSWORD:-mypassword}
-            POSTGRES_DB: ${DB_NAME:-crypto_features}
+            POSTGRES_USER: ${DB_USER}
+            POSTGRES_PASSWORD: ${DB_PASSWORD}
+            POSTGRES_DB: ${DB_NAME}
         ports:
             - "127.0.0.1:5432:5432"
         volumes:
@@ -25,14 +25,14 @@ services:
         container_name: nifty_vol_api
         restart: always
         ports:
-            - "8000:8000"
+            - "127.0.0.1:8000:8000"
         environment:
             - PORT=8000
             - DB_HOST=db
             - DB_PORT=5432
-            - DB_USER=${DB_USER:-myuser}
-            - DB_PASSWORD=${DB_PASSWORD:-mypassword}
-            - DB_NAME=${DB_NAME:-crypto_features}
+            - DB_USER=${DB_USER}
+            - DB_PASSWORD=${DB_PASSWORD}
+            - DB_NAME=${DB_NAME}
             - REDIS_HOST=redis
             - REDIS_PORT=6379
         volumes:
@@ -48,7 +48,7 @@ services:
         volumes:
             - ./prometheus.yml:/etc/prometheus/prometheus.yml
         ports:
-            - "9090:9090"
+            - "127.0.0.1:9090:9090"
         depends_on:
             - app
 
@@ -56,9 +56,9 @@ services:
         image: grafana/grafana:latest
         container_name: my_grafana
         environment:
-            - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-            - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+            - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+            - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
         ports:
-            - "3000:3000"
+            - "127.0.0.1:3000:3000"
         depends_on:
             - prometheus

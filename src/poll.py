@@ -14,9 +14,95 @@ import json
 from sklearn.preprocessing import StandardScaler
 from config import SEQ_LEN, FFD_D, FFD_MAX_LAGS, DB_CONFIG, REDIS_CONFIG
 
+import pandas_market_calendars as mcal
+
+def merge_nifty_vix(df_nifty, df_vix):
+    """Joins Nifty and VIX hourly data using left join and forward-fill only, dropping initial NaNs."""
+    if isinstance(df_nifty.columns, pd.MultiIndex):
+        df_nifty.columns = df_nifty.columns.get_level_values(0)
+    if isinstance(df_vix.columns, pd.MultiIndex):
+        df_vix.columns = df_vix.columns.get_level_values(0)
+        
+    if df_nifty.index.tz is not None:
+        df_nifty.index = df_nifty.index.tz_convert("Asia/Kolkata")
+    df_nifty.index = df_nifty.index.tz_localize(None)
+
+    if df_vix.index.tz is not None:
+        df_vix.index = df_vix.index.tz_convert("Asia/Kolkata")
+    df_vix.index = df_vix.index.tz_localize(None)
+
+    df_vix_close = df_vix[['Close']].rename(columns={'Close': 'vix'})
+    df_merged = df_nifty.join(df_vix_close, how='left')
+    df_merged['vix'] = df_merged['vix'].ffill()
+    df_merged = df_merged.dropna(subset=['vix'])
+    df_merged['vix_return'] = df_merged['vix'].pct_change(1).fillna(0.0)
+    return df_merged.rename(columns={
+        'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+    })
+
+def write_forecast_to_cache(r_client, current_price, current_vix, current_realized_vol, forecasted_vol, expected_change, action, source_datetime):
+    """Writes the forecast details to Upstash Redis cache with a 1-hour expiration."""
+    result = {
+        "ticker": "^NSEI",
+        "current_price": float(current_price),
+        "current_vix": float(current_vix),
+        "current_realized_vol": float(current_realized_vol),
+        "forecasted_vol_5h": float(forecasted_vol),
+        "expected_change_pct": float(expected_change),
+        "action": action,
+        "date": source_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    r_client.setex("nifty_forecast", 3600, json.dumps(result))
+    return result
+
 def get_next_market_candle(dt, steps=5):
-    """Calculates the Nth subsequent Nifty trading candle datetime, skipping weekends/non-trading hours."""
-    # Nifty hourly candles occur at these times in IST (represented timezone-naive)
+    """Calculates the Nth subsequent Nifty trading candle datetime using pandas_market_calendars for NSE."""
+    try:
+        # Get NSE calendar
+        nse = mcal.get_calendar('NSE')
+        # We look ahead up to 20 calendar days to find the next trading days
+        start_date = dt.date()
+        end_date = start_date + datetime.timedelta(days=20)
+        
+        schedule = nse.schedule(start_date=start_date.strftime("%Y-%m-%d"), end_date=end_date.strftime("%Y-%m-%d"))
+        # Valid trading days in index as pandas Timestamps (make naive)
+        trading_days = schedule.index.tz_localize(None)
+        
+        # Hourly market times in IST
+        market_times = [
+            datetime.time(9, 15),
+            datetime.time(10, 15),
+            datetime.time(11, 15),
+            datetime.time(12, 15),
+            datetime.time(13, 15),
+            datetime.time(14, 15),
+            datetime.time(15, 15)
+        ]
+        
+        # Build list of all valid candle datetimes starting from start_date
+        valid_candles = []
+        for day in trading_days:
+            for t in market_times:
+                valid_candles.append(datetime.datetime.combine(day.date(), t))
+                
+        # Find index of the first candle that is >= dt
+        dt_naive = dt.replace(tzinfo=None)
+        
+        matching_idx = None
+        for i, val in enumerate(valid_candles):
+            if val == dt_naive:
+                matching_idx = i
+                break
+        
+        if matching_idx is not None:
+            target_idx = matching_idx + steps
+            if target_idx < len(valid_candles):
+                return valid_candles[target_idx]
+                
+    except Exception as e:
+        print(f"Error resolving calendar via pandas_market_calendars: {e}. Falling back to simple heuristic.")
+        
+    # Heuristic Fallback (skips weekends and wraps hourly candles)
     market_times = [
         datetime.time(9, 15),
         datetime.time(10, 15),
@@ -27,34 +113,29 @@ def get_next_market_candle(dt, steps=5):
         datetime.time(15, 15)
     ]
     
-    current_dt = dt
+    current_dt = dt.replace(tzinfo=None)
     for _ in range(steps):
         current_time = current_dt.time()
         try:
             idx = market_times.index(current_time)
         except ValueError:
-            # Fallback if the timestamp is offset or outside standard candles
             idx = -1
             for i, t in enumerate(market_times):
                 if current_time <= t:
                     idx = i
                     break
             if idx == -1:
-                # After 15:15, wrap to next day 09:15
                 current_dt = current_dt + datetime.timedelta(days=1)
                 current_dt = current_dt.replace(hour=9, minute=15, second=0, microsecond=0)
                 continue
         
         if idx < 6:
-            # Next hour on same day
             next_time = market_times[idx + 1]
             current_dt = current_dt.replace(hour=next_time.hour, minute=next_time.minute, second=0, microsecond=0)
         else:
-            # Next day 09:15
             current_dt = current_dt + datetime.timedelta(days=1)
             current_dt = current_dt.replace(hour=9, minute=15, second=0, microsecond=0)
             
-        # Skip weekends
         while current_dt.weekday() >= 5:
             current_dt = current_dt + datetime.timedelta(days=1)
             
@@ -268,50 +349,54 @@ def generate_live_inference():
     with open(scaler_path, "rb") as f_in:
         scaler = pickle.load(f_in)
         
-    # Query database for last ingested datetime to optimize Lookback
+    # Query database for last ingested datetime and last 150 raw rows to optimize Lookback
     last_dt = None
+    db_rows = []
     try:
         conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
         cur = conn.cursor()
         cur.execute("SELECT MAX(datetime) FROM nifty_vix_raw;")
         last_dt = cur.fetchone()[0]
+        if last_dt:
+            # Query last 150 raw candles
+            cur.execute("""
+                SELECT datetime, open, high, low, close, volume, vix 
+                FROM nifty_vix_raw 
+                ORDER BY datetime DESC 
+                LIMIT 150;
+            """)
+            db_rows = cur.fetchall()
         cur.close()
         conn.close()
     except Exception as db_err:
         print(f"Could not retrieve last ingested candle from database: {db_err}")
         
-    if last_dt:
-        # Download from 25 days before last datetime to ensure sufficient features warm-up
-        start_str = (last_dt - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
+    if last_dt and db_rows:
+        # DB Warm-up: Convert rows to DataFrame
+        df_db = pd.DataFrame(db_rows, columns=['datetime', 'open', 'high', 'low', 'close', 'volume', 'vix'])
+        df_db.set_index('datetime', inplace=True)
+        df_db.index = pd.to_datetime(df_db.index)
+        
+        # Download only the last 3 days from Yahoo Finance to minimize latency
+        start_str = (last_dt - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
         print(f"Fetching live market data from Yahoo Finance since {start_str}...")
-        df_nifty = yf.download("^NSEI", start=start_str, interval="1h", timeout=15)
-        df_vix = yf.download("^INDIAVIX", start=start_str, interval="1h", timeout=15)
+        df_nifty_new = yf.download("^NSEI", start=start_str, interval="1h", timeout=15)
+        df_vix_new = yf.download("^INDIAVIX", start=start_str, interval="1h", timeout=15)
+        
+        df_merged_new = merge_nifty_vix(df_nifty_new, df_vix_new)
+        
+        # Combine database history and new Yahoo Finance data
+        df_combined = pd.concat([df_db, df_merged_new])
+        df_combined = df_combined[~df_combined.index.duplicated(keep='last')].sort_index()
     else:
+        # Full download fallback
         print("Fetching last 30 days of market data from Yahoo Finance...")
         df_nifty = yf.download("^NSEI", period="30d", interval="1h", timeout=15)
         df_vix = yf.download("^INDIAVIX", period="30d", interval="1h", timeout=15)
+        df_combined = merge_nifty_vix(df_nifty, df_vix)
         
-    if isinstance(df_nifty.columns, pd.MultiIndex):
-        df_nifty.columns = df_nifty.columns.get_level_values(0)
-    if isinstance(df_vix.columns, pd.MultiIndex):
-        df_vix.columns = df_vix.columns.get_level_values(0)
-        
-    df_nifty.index = df_nifty.index.tz_localize(None)
-    df_vix.index = df_vix.index.tz_localize(None)
-    
-    # Left join to VIX and forward fill only to prevent look-ahead bias
-    df_vix_close = df_vix[['Close']].rename(columns={'Close': 'vix'})
-    df_merged = df_nifty.join(df_vix_close, how='left')
-    df_merged['vix'] = df_merged['vix'].ffill()
-    df_merged = df_merged.dropna(subset=['vix'])
-    
-    df_merged['vix_return'] = df_merged['vix'].pct_change(1).fillna(0.0)
-    df_merged = df_merged.rename(columns={
-        'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
-    })
-    
     # Build technical features
-    df_features = build_live_features(df_merged)
+    df_features = build_live_features(df_combined)
     df_features = apply_fractional_differentiation(df_features)
     
     # Safety Check: Enforce minimum data length
@@ -342,6 +427,14 @@ def generate_live_inference():
     source_datetime = df_features.index[-1]
     target_datetime = get_next_market_candle(source_datetime, steps=5)
     
+    # Filter only new data to write back to the database
+    if last_dt:
+        df_merged_to_write = df_combined[df_combined.index >= last_dt]
+        df_features_to_write = df_features[df_features.index >= last_dt]
+    else:
+        df_merged_to_write = df_combined
+        df_features_to_write = df_features
+        
     # Single Transaction Database Ingestion
     conn = None
     try:
@@ -352,14 +445,23 @@ def generate_live_inference():
         with conn:
             with conn.cursor() as cur:
                 print("Updating raw database table...")
-                upsert_raw_market_data(cur, df_merged)
+                upsert_raw_market_data(cur, df_merged_to_write)
                 print("Updating training features database table...")
-                upsert_training_data(cur, df_features)
+                upsert_training_data(cur, df_features_to_write)
                 print("Logging forecast to database...")
                 cur.execute("""
                     INSERT INTO volatility_forecasts 
-                    (source_datetime, target_datetime, current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_datetime, target_datetime, current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action, model_version)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'attention_gru_v1')
+                    ON CONFLICT (ticker, source_datetime, model_version) DO UPDATE SET
+                        target_datetime = EXCLUDED.target_datetime,
+                        current_price = EXCLUDED.current_price,
+                        current_vix = EXCLUDED.current_vix,
+                        current_realized_vol = EXCLUDED.current_realized_vol,
+                        forecasted_vol_5h = EXCLUDED.forecasted_vol_5h,
+                        expected_change_pct = EXCLUDED.expected_change_pct,
+                        action = EXCLUDED.action,
+                        datetime = CURRENT_TIMESTAMP;
                 """, (
                     source_datetime,
                     target_datetime,
@@ -379,19 +481,12 @@ def generate_live_inference():
             conn.close()
             
     # Active Redis Cache Invalidation / Refresh
-    result = {
-        "ticker": "^NSEI",
-        "current_price": float(current_price),
-        "current_vix": float(current_vix),
-        "current_realized_vol": float(current_realized_vol),
-        "forecasted_vol_5h": float(forecasted_vol),
-        "expected_change_pct": float(expected_change),
-        "action": action,
-        "date": source_datetime.strftime("%Y-%m-%d %H:%M:%S")
-    }
     try:
         r_client = redis.Redis(**REDIS_CONFIG, socket_timeout=10, socket_connect_timeout=10)
-        r_client.setex("nifty_forecast", 3600, json.dumps(result))
+        write_forecast_to_cache(
+            r_client, current_price, current_vix, current_realized_vol, 
+            forecasted_vol, expected_change, action, source_datetime
+        )
         print("Redis cache updated successfully.")
     except Exception as cache_err:
         print(f"Failed to update Redis cache (forecast inserted to DB successfully): {cache_err}")
