@@ -16,8 +16,9 @@ def build_and_store_features():
     
     # Merge datasets
     df_vix_close = df_vix[['Close']].rename(columns={'Close': 'vix'})
-    df_merged = df_nifty.join(df_vix_close, how='inner')
-    df_merged['vix'] = df_merged['vix'].ffill().bfill()
+    df_merged = df_nifty.join(df_vix_close, how='left')
+    df_merged['vix'] = df_merged['vix'].ffill()
+    df_merged = df_merged.dropna(subset=['vix'])
     df_merged['vix_return'] = df_merged['vix'].pct_change(1).fillna(0.0)
     
     df_merged = df_merged.rename(columns={

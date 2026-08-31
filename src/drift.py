@@ -11,27 +11,32 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
     """
     print(f"Analyzing MAE, R2, and Directional Accuracy over the last {window_hours} hours...")
     
+    conn = None
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        # 1. Connect to DB and fetch resolved predictions
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
         cur = conn.cursor()
+        cur.execute("SET statement_timeout = 30000;")
         
-        # SQL: Join forecasts with actual realized training data 5 hours in the future
+        # Join forecasts with actual 5-candle realized average target
         cur.execute("""
             SELECT 
-                f.datetime,
+                f.source_datetime,
                 f.current_realized_vol, 
                 f.forecasted_vol_5h, 
-                t.realized_vol_5 AS actual_future_vol
+                (
+                    SELECT AVG(t.realized_vol_5)
+                    FROM nifty_training_data t
+                    WHERE t.datetime > f.source_datetime AND t.datetime <= f.target_datetime
+                ) AS actual_future_vol
             FROM volatility_forecasts f
-            INNER JOIN nifty_training_data t 
-                ON t.datetime = f.datetime + interval '5 hours'
-            ORDER BY f.datetime DESC 
+            WHERE f.target_datetime <= (SELECT MAX(datetime) FROM nifty_training_data)
+            ORDER BY f.source_datetime DESC 
             LIMIT %s
         """, (window_hours,))
         
         rows = cur.fetchall()
         cur.close()
-        conn.close()
         
         if len(rows) < 15:
             print("Insufficient matured forecast history in database to calculate metrics.")
@@ -47,13 +52,13 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
         actuals = df_eval['actual_future_vol'].values
         predictions = df_eval['predicted_future_vol'].values
         
-        # 1. Calculate Mean Absolute Error (MAE)
+        # Calculate Mean Absolute Error (MAE)
         mae = mean_absolute_error(actuals, predictions)
         
-        # 2. Calculate R2 Score (Percentage)
+        # Calculate R2 Score (Percentage)
         r2 = r2_score(actuals, predictions) * 100.0
         
-        # 3. Calculate Directional Accuracy (1 = Rise, 0 = Fall)
+        # Calculate Directional Accuracy (1 = Rise, 0 = Fall)
         pred_rise = np.where(df_eval['predicted_future_vol'] > df_eval['current_vol'], 1, 0)
         actual_rise = np.where(df_eval['actual_future_vol'] > df_eval['current_vol'], 1, 0)
         current_accuracy = accuracy_score(actual_rise, pred_rise) * 100.0
@@ -61,8 +66,7 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
         # Flag drift if accuracy drops below safety limit
         drift_detected = current_accuracy < critical_accuracy_threshold
         
-        # Log all metrics to database
-        conn = psycopg2.connect(**DB_CONFIG)
+        # 2. Log all metrics to database using the same connection (in a new transaction)
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO model_drift_metrics 
@@ -78,7 +82,6 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
         ))
         conn.commit()
         cur.close()
-        conn.close()
         
         print("\n" + "="*20 + " MODEL DRIFT & PERFORMANCE REPORT " + "="*20)
         print(f"Evaluation Window         : Last {len(df_eval)} resolved predictions")
@@ -91,6 +94,9 @@ def monitor_accuracy_drift(window_hours=100, critical_accuracy_threshold=60.0):
         
     except Exception as e:
         print(f"Error checking drift: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == "__main__":
     monitor_accuracy_drift()

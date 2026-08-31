@@ -12,6 +12,18 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
 import copy
 from config import PROCESSED_DATA_DIR, VOL_FORECAST_WINDOW, SEQ_LEN, LOOKBACK_SIZE
+import random
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -66,7 +78,7 @@ def train_champion_regressor(X_tr, y_tr, epochs=30, batch_size=32, verbose=False
     loader = DataLoader(
         TensorDataset(torch.FloatTensor(X_tr_scaled), torch.FloatTensor(y_tr)), 
         batch_size=batch_size, 
-        shuffle=False
+        shuffle=True
     )
     
     model = AttentionGRURegressor(
@@ -163,7 +175,12 @@ def run_regression_pipeline():
     mae = mean_absolute_error(wf_actuals, wf_preds)
     r2 = r2_score(wf_actuals, wf_preds)
     
-    current_vol_baseline = realized_vol_5_raw[split_idx : split_idx + len(wf_preds)] * 100.0
+    current_vol_baseline = (
+        realized_vol_5_raw[
+            split_idx + SEQ_LEN - 1:
+            split_idx + SEQ_LEN - 1 + len(wf_preds)
+        ] * 100.0
+    )
     pred_change = np.where(wf_preds > current_vol_baseline, 1, 0)
     actual_change = np.where(wf_actuals > current_vol_baseline, 1, 0)
     dir_accuracy = accuracy_score(actual_change, pred_change) * 100

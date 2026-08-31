@@ -55,8 +55,17 @@ def initialize_database_schema():
             current_realized_vol NUMERIC,
             forecasted_vol_5h NUMERIC,
             expected_change_pct NUMERIC,
-            action VARCHAR(100)
+            action VARCHAR(100),
+            source_datetime TIMESTAMP,
+            target_datetime TIMESTAMP
         );
+    """)
+    
+    # Run column migrations to ensure existing deployments get the new columns
+    cur.execute("""
+        ALTER TABLE volatility_forecasts 
+        ADD COLUMN IF NOT EXISTS source_datetime TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS target_datetime TIMESTAMP;
     """)
     
     # 4. Table for tracking model performance & drift history (Full Regression Metrics)
@@ -71,6 +80,13 @@ def initialize_database_schema():
             accuracy_threshold NUMERIC,
             drift_detected BOOLEAN
         );
+    """)
+    
+    # Create indexes to speed up query performance
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_forecasts_source_datetime ON volatility_forecasts (source_datetime DESC);
+        CREATE INDEX IF NOT EXISTS idx_forecasts_target_datetime ON volatility_forecasts (target_datetime DESC);
+        CREATE INDEX IF NOT EXISTS idx_drift_calculated_at ON model_drift_metrics (calculated_at DESC);
     """)
     
     conn.commit()

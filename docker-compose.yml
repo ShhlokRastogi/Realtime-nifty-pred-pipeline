@@ -4,11 +4,11 @@ services:
         image: postgres:13
         container_name: my_postgres
         environment:
-            POSTGRES_USER: myuser
-            POSTGRES_PASSWORD: mypassword
-            POSTGRES_DB: crypto_features
+            POSTGRES_USER: ${DB_USER:-myuser}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-mypassword}
+            POSTGRES_DB: ${DB_NAME:-crypto_features}
         ports:
-            - "5432:5432"
+            - "127.0.0.1:5432:5432"
         volumes:
             - ./docker_data/postgres:/var/lib/postgresql/data
     
@@ -16,7 +16,7 @@ services:
         image: redis:7-alpine
         container_name: my_redis
         ports:
-            - "6379:6379"
+            - "127.0.0.1:6379:6379"
         volumes:
             - ./docker_data/redis:/data
 
@@ -30,9 +30,9 @@ services:
             - PORT=8000
             - DB_HOST=db
             - DB_PORT=5432
-            - DB_USER=myuser
-            - DB_PASSWORD=mypassword
-            - DB_NAME=crypto_features
+            - DB_USER=${DB_USER:-myuser}
+            - DB_PASSWORD=${DB_PASSWORD:-mypassword}
+            - DB_NAME=${DB_NAME:-crypto_features}
             - REDIS_HOST=redis
             - REDIS_PORT=6379
         volumes:
@@ -56,8 +56,8 @@ services:
         image: grafana/grafana:latest
         container_name: my_grafana
         environment:
-            - GF_SECURITY_ADMIN_USER=admin
-            - GF_SECURITY_ADMIN_PASSWORD=admin
+            - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+            - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
         ports:
             - "3000:3000"
         depends_on:

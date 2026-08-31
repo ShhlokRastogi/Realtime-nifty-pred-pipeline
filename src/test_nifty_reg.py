@@ -8,6 +8,18 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 from config import PROCESSED_DATA_DIR, VOL_FORECAST_WINDOW, SEQ_LEN, LOOKBACK_SIZE
+import random
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -100,8 +112,12 @@ def run_volatility_backtest():
         X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
         preds = model(X_test_tensor).cpu().numpy()
         
-    # Baseline current volatility (at start of prediction)
-    current_vol_baseline = realized_vol_5_raw[split_idx : split_idx + len(preds)] * 100.0
+    current_vol_baseline = (
+        realized_vol_5_raw[
+            split_idx + SEQ_LEN - 1:
+            split_idx + SEQ_LEN - 1 + len(preds)
+        ] * 100.0
+    )
     
     # =====================================================================
     # SIMULATE OPTIONS VOLATILITY STRATEGY (Fixed 2% Risk Allocation)

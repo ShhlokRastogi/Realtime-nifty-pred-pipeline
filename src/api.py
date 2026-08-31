@@ -5,6 +5,7 @@ import redis
 import psycopg2
 import threading
 import time
+import datetime
 import torch
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
@@ -50,13 +51,50 @@ r = redis.Redis(**REDIS_CONFIG)
 def poller_loop():
     print("=== Background Poller & Drift Monitor Thread Initialized ===")
     while True:
-        # Update Prometheus Gauges from Supabase first so the dashboard displays real history immediately
+        # 1. Check last forecast timestamp from database
+        last_forecast_time = None
+        conn = None
         try:
-            update_prometheus_metrics()
-        except Exception as e:
-            print(f"Error updating Prometheus metrics on startup: {e}")
+            conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 10000;")
+                cur.execute("SELECT MAX(source_datetime) FROM volatility_forecasts;")
+                last_forecast_time = cur.fetchone()[0]
+        except Exception as db_err:
+            print(f"Could not check last forecast timestamp: {db_err}")
+        finally:
+            if conn:
+                conn.close()
+                
+        if last_forecast_time:
+            # If last forecast was within 50 minutes, skip to avoid duplicates
+            time_elapsed = datetime.datetime.now() - last_forecast_time
+            if time_elapsed < datetime.timedelta(minutes=50):
+                print(f"Last forecast was generated {time_elapsed.seconds // 60} minutes ago. Skipping this poller cycle.")
+                time.sleep(300)  # Sleep 5 minutes and check again
+                continue
+                
+        # 2. Acquire Redis lock to prevent race conditions during scaling
+        lock_acquired = False
+        try:
+            lock_acquired = r.set("poller_lock", "locked", ex=3000, nx=True)
+        except Exception as lock_err:
+            print(f"Could not acquire Redis distributed lock: {lock_err}. Proceeding with caution...")
+            lock_acquired = True  # Fallback to run if Redis is down
+            
+        if not lock_acquired:
+            print("Another poller worker has acquired the lock. Skipping this poller cycle.")
+            time.sleep(300)  # Sleep 5 minutes and check again
+            continue
 
+        # 3. Update gauges and execute live inference & drift monitor
         try:
+            # Update Prometheus Gauges from Supabase first so the dashboard displays real history immediately
+            try:
+                update_prometheus_metrics()
+            except Exception as e:
+                print(f"Error updating Prometheus metrics on startup: {e}")
+
             print("Executing hourly live data ingestion, feature generation, and prediction...")
             generate_live_inference()
             
@@ -72,15 +110,17 @@ def poller_loop():
 
 def update_prometheus_metrics():
     """Reads latest forecasts and drift metrics from Supabase and updates Prometheus."""
+    conn = None
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
         cur = conn.cursor()
+        cur.execute("SET statement_timeout = 30000;")
         
-        # 1. Fetch latest forecast
+        # 1. Fetch latest forecast (ordered by source_datetime DESC)
         cur.execute("""
             SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct
             FROM volatility_forecasts
-            ORDER BY datetime DESC
+            ORDER BY source_datetime DESC
             LIMIT 1;
         """)
         f_row = cur.fetchone()
@@ -95,7 +135,6 @@ def update_prometheus_metrics():
         d_row = cur.fetchone()
         
         cur.close()
-        conn.close()
         
         if f_row:
             NIFTY_PRICE.set(float(f_row[0]))
@@ -113,6 +152,9 @@ def update_prometheus_metrics():
         print("Prometheus gauges updated.")
     except Exception as e:
         print(f"Error updating Prometheus metrics: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 @app.on_event("startup")
 def startup_event():
@@ -175,19 +217,20 @@ def fetch_latest_nifty_forecast():
     except Exception as cache_err:
         print(f"Redis Cache connection failed (falling back to database): {cache_err}")
         
-    # Query Supabase for the latest forecast
+    # Query Supabase for the latest forecast (ordered by source_datetime DESC)
+    conn = None
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
         cur = conn.cursor()
+        cur.execute("SET statement_timeout = 30000;")
         cur.execute("""
-            SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action, datetime
+            SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action, source_datetime
             FROM volatility_forecasts
-            ORDER BY datetime DESC
+            ORDER BY source_datetime DESC
             LIMIT 1;
         """)
         row = cur.fetchone()
         cur.close()
-        conn.close()
         
         if not row:
             raise HTTPException(status_code=404, detail="No predictions found in database.")
@@ -215,6 +258,9 @@ def fetch_latest_nifty_forecast():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 @app.get("/predict/nifty")
 def predict_nifty():
@@ -226,8 +272,12 @@ def health():
     return {"status": "ok"}
 
 @app.get("/logs")
-def get_logs():
+def get_logs(api_key: str = None):
     """Exposes the last 200 lines of standard output/error logs for MLOps diagnostics."""
+    expected_key = os.getenv("ADMIN_API_KEY")
+    if expected_key and api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Unauthorized log access.")
+        
     if not os.path.exists("poller.log"):
         return Response("No logs recorded yet.", media_type="text/plain")
     try:

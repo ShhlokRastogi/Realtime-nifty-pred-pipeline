@@ -2,13 +2,63 @@ import os
 import time
 import pickle
 import psycopg2
+from psycopg2.extras import execute_values
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import yfinance as yf
+import datetime
+import redis
+import json
 from sklearn.preprocessing import StandardScaler
-from config import SEQ_LEN, FFD_D, FFD_MAX_LAGS, DB_CONFIG
+from config import SEQ_LEN, FFD_D, FFD_MAX_LAGS, DB_CONFIG, REDIS_CONFIG
+
+def get_next_market_candle(dt, steps=5):
+    """Calculates the Nth subsequent Nifty trading candle datetime, skipping weekends/non-trading hours."""
+    # Nifty hourly candles occur at these times in IST (represented timezone-naive)
+    market_times = [
+        datetime.time(9, 15),
+        datetime.time(10, 15),
+        datetime.time(11, 15),
+        datetime.time(12, 15),
+        datetime.time(13, 15),
+        datetime.time(14, 15),
+        datetime.time(15, 15)
+    ]
+    
+    current_dt = dt
+    for _ in range(steps):
+        current_time = current_dt.time()
+        try:
+            idx = market_times.index(current_time)
+        except ValueError:
+            # Fallback if the timestamp is offset or outside standard candles
+            idx = -1
+            for i, t in enumerate(market_times):
+                if current_time <= t:
+                    idx = i
+                    break
+            if idx == -1:
+                # After 15:15, wrap to next day 09:15
+                current_dt = current_dt + datetime.timedelta(days=1)
+                current_dt = current_dt.replace(hour=9, minute=15, second=0, microsecond=0)
+                continue
+        
+        if idx < 6:
+            # Next hour on same day
+            next_time = market_times[idx + 1]
+            current_dt = current_dt.replace(hour=next_time.hour, minute=next_time.minute, second=0, microsecond=0)
+        else:
+            # Next day 09:15
+            current_dt = current_dt + datetime.timedelta(days=1)
+            current_dt = current_dt.replace(hour=9, minute=15, second=0, microsecond=0)
+            
+        # Skip weekends
+        while current_dt.weekday() >= 5:
+            current_dt = current_dt + datetime.timedelta(days=1)
+            
+    return current_dt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -119,23 +169,12 @@ def apply_fractional_differentiation(df, d=FFD_D, max_lags=FFD_MAX_LAGS):
 # =====================================================================
 # DATABASE WRITE OPERATIONS
 # =====================================================================
-def upsert_raw_market_data(conn, df_merged):
-    """Upserts raw price and VIX candles into the database."""
-    cur = conn.cursor()
+def upsert_raw_market_data(cur, df_merged):
+    """Upserts raw price and VIX candles into the database using bulk execute_values."""
+    data = []
     for timestamp, row in df_merged.iterrows():
-        # Handle volume conversion to standard python int/float
         vol = int(row['volume']) if not pd.isna(row['volume']) else 0
-        cur.execute("""
-            INSERT INTO nifty_vix_raw (datetime, open, high, low, close, volume, vix)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (datetime) DO UPDATE SET
-                open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                vix = EXCLUDED.vix;
-        """, (
+        data.append((
             timestamp, 
             float(row['open']), 
             float(row['high']), 
@@ -144,39 +183,25 @@ def upsert_raw_market_data(conn, df_merged):
             vol, 
             float(row['vix'])
         ))
-    conn.commit()
-    cur.close()
+    
+    query = """
+        INSERT INTO nifty_vix_raw (datetime, open, high, low, close, volume, vix)
+        VALUES %s
+        ON CONFLICT (datetime) DO UPDATE SET
+            open = EXCLUDED.open,
+            high = EXCLUDED.high,
+            low = EXCLUDED.low,
+            close = EXCLUDED.close,
+            volume = EXCLUDED.volume,
+            vix = EXCLUDED.vix;
+    """
+    execute_values(cur, query, data)
 
-def upsert_training_data(conn, df_features):
-    """Upserts fully generated 16-feature records into the database."""
-    cur = conn.cursor()
+def upsert_training_data(cur, df_features):
+    """Upserts fully generated 16-feature records into the database using bulk execute_values."""
+    data = []
     for timestamp, row in df_features.iterrows():
-        cur.execute("""
-            INSERT INTO nifty_training_data 
-            (datetime, close, rsi, macd_diff_pct, bb_width, atr_pct, hl_spread, volume_delta, 
-             lagged_return_1, vix, vix_return, realized_vol_5, realized_vol_10, realized_vol_20, 
-             close_fracdiff, sin_hour, cos_hour, sin_day, cos_day)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (datetime) DO UPDATE SET
-                close = EXCLUDED.close,
-                rsi = EXCLUDED.rsi,
-                macd_diff_pct = EXCLUDED.macd_diff_pct,
-                bb_width = EXCLUDED.bb_width,
-                atr_pct = EXCLUDED.atr_pct,
-                hl_spread = EXCLUDED.hl_spread,
-                volume_delta = EXCLUDED.volume_delta,
-                lagged_return_1 = EXCLUDED.lagged_return_1,
-                vix = EXCLUDED.vix,
-                vix_return = EXCLUDED.vix_return,
-                realized_vol_5 = EXCLUDED.realized_vol_5,
-                realized_vol_10 = EXCLUDED.realized_vol_10,
-                realized_vol_20 = EXCLUDED.realized_vol_20,
-                close_fracdiff = EXCLUDED.close_fracdiff,
-                sin_hour = EXCLUDED.sin_hour,
-                cos_hour = EXCLUDED.cos_hour,
-                sin_day = EXCLUDED.sin_day,
-                cos_day = EXCLUDED.cos_day;
-        """, (
+        data.append((
             timestamp, 
             float(row['close']), 
             float(row['rsi']), 
@@ -197,26 +222,34 @@ def upsert_training_data(conn, df_features):
             float(row['sin_day']), 
             float(row['cos_day'])
         ))
-    conn.commit()
-    cur.close()
-
-def log_forecast_to_db(conn, price, vix, realized_vol, forecasted_vol, change_pct, action):
-    """Inserts prediction row into database."""
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO volatility_forecasts 
-        (current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (
-        float(price), 
-        float(vix), 
-        float(realized_vol), 
-        float(forecasted_vol), 
-        float(change_pct), 
-        action
-    ))
-    conn.commit()
-    cur.close()
+        
+    query = """
+        INSERT INTO nifty_training_data 
+        (datetime, close, rsi, macd_diff_pct, bb_width, atr_pct, hl_spread, volume_delta, 
+         lagged_return_1, vix, vix_return, realized_vol_5, realized_vol_10, realized_vol_20, 
+         close_fracdiff, sin_hour, cos_hour, sin_day, cos_day)
+        VALUES %s
+        ON CONFLICT (datetime) DO UPDATE SET
+            close = EXCLUDED.close,
+            rsi = EXCLUDED.rsi,
+            macd_diff_pct = EXCLUDED.macd_diff_pct,
+            bb_width = EXCLUDED.bb_width,
+            atr_pct = EXCLUDED.atr_pct,
+            hl_spread = EXCLUDED.hl_spread,
+            volume_delta = EXCLUDED.volume_delta,
+            lagged_return_1 = EXCLUDED.lagged_return_1,
+            vix = EXCLUDED.vix,
+            vix_return = EXCLUDED.vix_return,
+            realized_vol_5 = EXCLUDED.realized_vol_5,
+            realized_vol_10 = EXCLUDED.realized_vol_10,
+            realized_vol_20 = EXCLUDED.realized_vol_20,
+            close_fracdiff = EXCLUDED.close_fracdiff,
+            sin_hour = EXCLUDED.sin_hour,
+            cos_hour = EXCLUDED.cos_hour,
+            sin_day = EXCLUDED.sin_day,
+            cos_day = EXCLUDED.cos_day;
+    """
+    execute_values(cur, query, data)
 
 # =====================================================================
 # LIVE INFERENCE EXECUTION
@@ -235,10 +268,29 @@ def generate_live_inference():
     with open(scaler_path, "rb") as f_in:
         scaler = pickle.load(f_in)
         
-    print("Fetching live market data from Yahoo Finance...")
-    df_nifty = yf.download("^NSEI", period="30d", interval="1h")
-    df_vix = yf.download("^INDIAVIX", period="30d", interval="1h")
-    
+    # Query database for last ingested datetime to optimize Lookback
+    last_dt = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
+        cur = conn.cursor()
+        cur.execute("SELECT MAX(datetime) FROM nifty_vix_raw;")
+        last_dt = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+    except Exception as db_err:
+        print(f"Could not retrieve last ingested candle from database: {db_err}")
+        
+    if last_dt:
+        # Download from 25 days before last datetime to ensure sufficient features warm-up
+        start_str = (last_dt - datetime.timedelta(days=25)).strftime("%Y-%m-%d")
+        print(f"Fetching live market data from Yahoo Finance since {start_str}...")
+        df_nifty = yf.download("^NSEI", start=start_str, interval="1h", timeout=15)
+        df_vix = yf.download("^INDIAVIX", start=start_str, interval="1h", timeout=15)
+    else:
+        print("Fetching last 30 days of market data from Yahoo Finance...")
+        df_nifty = yf.download("^NSEI", period="30d", interval="1h", timeout=15)
+        df_vix = yf.download("^INDIAVIX", period="30d", interval="1h", timeout=15)
+        
     if isinstance(df_nifty.columns, pd.MultiIndex):
         df_nifty.columns = df_nifty.columns.get_level_values(0)
     if isinstance(df_vix.columns, pd.MultiIndex):
@@ -247,26 +299,24 @@ def generate_live_inference():
     df_nifty.index = df_nifty.index.tz_localize(None)
     df_vix.index = df_vix.index.tz_localize(None)
     
+    # Left join to VIX and forward fill only to prevent look-ahead bias
     df_vix_close = df_vix[['Close']].rename(columns={'Close': 'vix'})
-    df_merged = df_nifty.join(df_vix_close, how='inner')
-    df_merged['vix'] = df_merged['vix'].ffill().bfill()
+    df_merged = df_nifty.join(df_vix_close, how='left')
+    df_merged['vix'] = df_merged['vix'].ffill()
+    df_merged = df_merged.dropna(subset=['vix'])
+    
     df_merged['vix_return'] = df_merged['vix'].pct_change(1).fillna(0.0)
     df_merged = df_merged.rename(columns={
         'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
     })
     
-    # 1. Update Raw Market Table in Supabase
-    conn = psycopg2.connect(**DB_CONFIG)
-    print("Updating raw database table...")
-    upsert_raw_market_data(conn, df_merged)
-    
-    # 2. Build Technical Features
+    # Build technical features
     df_features = build_live_features(df_merged)
     df_features = apply_fractional_differentiation(df_features)
     
-    # 3. Update Training Table in Supabase (with freshly generated features)
-    print("Updating training features database table...")
-    upsert_training_data(conn, df_features)
+    # Safety Check: Enforce minimum data length
+    if len(df_features) < SEQ_LEN:
+        raise ValueError(f"Not enough valid market rows for inference. Required: {SEQ_LEN}, got: {len(df_features)}")
     
     latest_X = df_features[FEATURE_COLS_VOL].values[-SEQ_LEN:]
     current_price = df_features['close'].values[-1]
@@ -280,16 +330,71 @@ def generate_live_inference():
         latest_X_tensor = torch.FloatTensor(latest_X_scaled).to(device)
         forecasted_vol = model(latest_X_tensor).cpu().numpy()[0]
         
-    expected_change = ((forecasted_vol - current_realized_vol)/current_realized_vol)*100
+    # Guard against zero realized volatility denominator
+    expected_change = ((forecasted_vol - current_realized_vol) / max(current_realized_vol, 1e-8)) * 100
     
     if forecasted_vol > (current_realized_vol * 1.50):
         action = "⚠️ CAUTION: Entering High Volatility. Reduce trade sizes / Buy puts."
     else:
         action = "✅ NORMAL: Market remains calm. Range-bound trading / standard sizing active."
         
-    # 4. Log the forecast to Supabase
-    log_forecast_to_db(conn, current_price, current_vix, current_realized_vol, forecasted_vol, expected_change, action)
-    conn.close()
+    # Get exact timestamps for forecast mapping
+    source_datetime = df_features.index[-1]
+    target_datetime = get_next_market_candle(source_datetime, steps=5)
+    
+    # Single Transaction Database Ingestion
+    conn = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 30000;")
+            
+        with conn:
+            with conn.cursor() as cur:
+                print("Updating raw database table...")
+                upsert_raw_market_data(cur, df_merged)
+                print("Updating training features database table...")
+                upsert_training_data(cur, df_features)
+                print("Logging forecast to database...")
+                cur.execute("""
+                    INSERT INTO volatility_forecasts 
+                    (source_datetime, target_datetime, current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    source_datetime,
+                    target_datetime,
+                    float(current_price),
+                    float(current_vix),
+                    float(current_realized_vol),
+                    float(forecasted_vol),
+                    float(expected_change),
+                    action
+                ))
+        print("Database transaction committed successfully.")
+    except Exception as db_err:
+        print(f"Database transaction failed, rolled back. Error: {db_err}")
+        raise db_err
+    finally:
+        if conn:
+            conn.close()
+            
+    # Active Redis Cache Invalidation / Refresh
+    result = {
+        "ticker": "^NSEI",
+        "current_price": float(current_price),
+        "current_vix": float(current_vix),
+        "current_realized_vol": float(current_realized_vol),
+        "forecasted_vol_5h": float(forecasted_vol),
+        "expected_change_pct": float(expected_change),
+        "action": action,
+        "date": source_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    try:
+        r_client = redis.Redis(**REDIS_CONFIG, socket_timeout=10, socket_connect_timeout=10)
+        r_client.setex("nifty_forecast", 3600, json.dumps(result))
+        print("Redis cache updated successfully.")
+    except Exception as cache_err:
+        print(f"Failed to update Redis cache (forecast inserted to DB successfully): {cache_err}")
     
     print("\n" + "#"*70)
     print(f"  LIVE PRODUCTION SIGNAL FOR INDEX: ^NSEI (Nifty 50)")
