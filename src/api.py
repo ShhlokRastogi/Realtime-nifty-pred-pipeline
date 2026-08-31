@@ -11,7 +11,6 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from config import REDIS_CONFIG, DB_CONFIG, TICKERS
-from prometheus_client import REGISTRY, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from poll import generate_live_inference
 from drift import monitor_accuracy_drift
 
@@ -127,23 +126,14 @@ def poller_loop():
             time.sleep(300)  # Sleep 5 minutes and check again
             continue
 
-        # 3. Update gauges and execute live inference & drift monitor
+        # 3. Execute live inference & drift monitor
         try:
-            # Update Prometheus Gauges from Supabase first so the dashboard displays real history immediately
-            try:
-                update_prometheus_metrics()
-            except Exception as e:
-                print(f"Error updating Prometheus metrics on startup: {e}")
-
             print("Executing hourly live data ingestion, feature generation, and prediction...")
             generate_live_inference()
-            
+
             print("Executing hourly performance metrics and drift monitoring check...")
             monitor_accuracy_drift(window_hours=100)
-            
-            # Update again after a successful run
-            update_prometheus_metrics()
-            
+
         except Exception as e:
             print(f"Error in background execution thread: {e}")
         finally:
@@ -163,54 +153,6 @@ def poller_loop():
                     
         time.sleep(3600)  # Run hourly
 
-def update_prometheus_metrics():
-    """Reads latest forecasts and drift metrics from Supabase and updates Prometheus."""
-    conn = None
-    try:
-        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=10)
-        cur = conn.cursor()
-        cur.execute("SET statement_timeout = 30000;")
-        
-        # 1. Fetch latest forecast (ordered by source_datetime DESC NULLS LAST)
-        cur.execute("""
-            SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct
-            FROM volatility_forecasts
-            ORDER BY source_datetime DESC NULLS LAST, datetime DESC
-            LIMIT 1;
-        """)
-        f_row = cur.fetchone()
-        
-        # 2. Fetch latest drift metrics
-        cur.execute("""
-            SELECT directional_accuracy, mean_absolute_error, r2_score, drift_detected
-            FROM model_drift_metrics
-            ORDER BY calculated_at DESC
-            LIMIT 1;
-        """)
-        d_row = cur.fetchone()
-        
-        cur.close()
-        
-        if f_row:
-            NIFTY_PRICE.set(float(f_row[0]))
-            INDIA_VIX.set(float(f_row[1]))
-            REALIZED_VOLATILITY.set(float(f_row[2]))
-            FORECASTED_VOLATILITY.set(float(f_row[3]))
-            EXPECTED_VOL_CHANGE.set(float(f_row[4]))
-            
-        if d_row:
-            DIRECTIONAL_ACCURACY.set(float(d_row[0]))
-            MAE_LOSS.set(float(d_row[1]))
-            R2_SCORE.set(float(d_row[2]))
-            DRIFT_GAUGE.set(1.0 if d_row[3] else 0.0)
-            
-        print("Prometheus gauges updated.")
-    except Exception as e:
-        print(f"Error updating Prometheus metrics: {e}")
-    finally:
-        if conn:
-            conn.close()
-
 @app.on_event("startup")
 def startup_event():
     # If in testing mode, skip database initialization and poller thread
@@ -229,20 +171,6 @@ def startup_event():
     t = threading.Thread(target=poller_loop, daemon=True)
     t.start()
     print("=== Background Poller Thread Started ===")
-
-# =====================================================================
-# PROMETHEUS METRICS CONFIGURATION
-# =====================================================================
-# Ensure we don't crash on Uvicorn live-reload by registering metric collectors safely
-NIFTY_PRICE = REGISTRY._names_to_collectors.get('nifty_price') or Gauge("nifty_price", "Current Nifty 50 index price")
-INDIA_VIX = REGISTRY._names_to_collectors.get('india_vix') or Gauge("india_vix", "Current India VIX fear index level")
-REALIZED_VOLATILITY = REGISTRY._names_to_collectors.get('realized_volatility') or Gauge("realized_volatility", "Nifty realized volatility percentage")
-FORECASTED_VOLATILITY = REGISTRY._names_to_collectors.get('forecasted_volatility') or Gauge("forecasted_volatility", "Attention GRU forecasted volatility percentage")
-EXPECTED_VOL_CHANGE = REGISTRY._names_to_collectors.get('expected_volatility_change_pct') or Gauge("expected_volatility_change_pct", "Predicted change in volatility percentage")
-DIRECTIONAL_ACCURACY = REGISTRY._names_to_collectors.get('directional_accuracy') or Gauge("directional_accuracy", "Current rolling directional accuracy of the model")
-MAE_LOSS = REGISTRY._names_to_collectors.get('mae_loss') or Gauge("mae_loss", "Current mean absolute error of the model")
-R2_SCORE = REGISTRY._names_to_collectors.get('r2_score') or Gauge("r2_score", "Current R-squared variance explained score")
-DRIFT_GAUGE = REGISTRY._names_to_collectors.get('drift_detected') or Gauge("drift_detected", "Flag indicating model drift (1=Yes, 0=No)")
 
 # =====================================================================
 # API ENDPOINTS
@@ -348,11 +276,6 @@ def get_logs(api_key: str = None):
         return Response("".join(lines[-200:]), media_type="text/plain")
     except Exception as e:
         return Response(f"Failed to read logs: {e}", media_type="text/plain")
-
-@app.get("/metrics")
-def metrics():
-    """Returns raw Prometheus scraping payload."""
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/promote", response_class=HTMLResponse)
 def promote_page():
