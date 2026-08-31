@@ -171,11 +171,11 @@ def update_prometheus_metrics():
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 30000;")
         
-        # 1. Fetch latest forecast (ordered by source_datetime DESC)
+        # 1. Fetch latest forecast (ordered by source_datetime DESC NULLS LAST)
         cur.execute("""
             SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct
             FROM volatility_forecasts
-            ORDER BY source_datetime DESC
+            ORDER BY source_datetime DESC NULLS LAST, datetime DESC
             LIMIT 1;
         """)
         f_row = cur.fetchone()
@@ -279,9 +279,9 @@ def fetch_latest_nifty_forecast():
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 30000;")
         cur.execute("""
-            SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action, source_datetime
+            SELECT current_price, current_vix, current_realized_vol, forecasted_vol_5h, expected_change_pct, action, source_datetime, datetime
             FROM volatility_forecasts
-            ORDER BY source_datetime DESC
+            ORDER BY source_datetime DESC NULLS LAST, datetime DESC
             LIMIT 1;
         """)
         row = cur.fetchone()
@@ -290,6 +290,10 @@ def fetch_latest_nifty_forecast():
         if not row:
             raise HTTPException(status_code=404, detail="No predictions found in database.")
             
+        # Use source_datetime if available, fall back to insertion datetime
+        forecast_ts = row[6] if row[6] is not None else row[7]
+        date_str = forecast_ts.strftime("%Y-%m-%d %H:%M:%S") if forecast_ts is not None else "unknown"
+        
         result = {
             "ticker": "^NSEI",
             "current_price": float(row[0]),
@@ -298,7 +302,7 @@ def fetch_latest_nifty_forecast():
             "forecasted_vol_5h": float(row[3]),
             "expected_change_pct": float(row[4]),
             "action": row[5],
-            "date": row[6].strftime("%Y-%m-%d %H:%M:%S")
+            "date": date_str
         }
         
         # Cache in Redis safely (don't crash if Redis write fails)
